@@ -1,0 +1,12 @@
+# Build artifacts
+build/
+
+# Generated audio
+*.wav
+
+# Temp files
+.tmp_*
+
+# Python cache
+__pycache__/
+*.pyc

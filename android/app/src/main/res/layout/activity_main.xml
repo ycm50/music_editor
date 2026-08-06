@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <EditText
+        android:id="@+id/editor"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_editor_box"
+        android:fontFamily="monospace"
+        android:gravity="top|start"
+        android:hint="@string/editor_hint"
+        android:inputType="textMultiLine"
+        android:maxLines="30"
+        android:padding="12dp"
+        android:scrollbars="vertical"
+        android:textSize="13sp" />
+
+    <!-- 生成要求输入框 -->
+    <EditText
+        android:id="@+id/prompt_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:hint="@string/prompt_hint"
+        android:inputType="textMultiLine"
+        android:maxLines="2"
+        android:textSize="14sp" />
+
+    <CheckBox
+        android:id="@+id/chk_include_context"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="@string/chk_include_context" />
+
+    <Button
+        android:id="@+id/btn_gen_score"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/btn_gen_score" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_import"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_import" />
+
+        <Button
+            android:id="@+id/btn_save"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="@string/btn_save" />
+
+        <Button
+            android:id="@+id/btn_play"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="@string/btn_play" />
+
+        <Button
+            android:id="@+id/btn_stop"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:enabled="false"
+            android:text="@string/btn_stop" />
+
+        <Button
+            android:id="@+id/btn_export"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="@string/btn_export" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/status_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/status_ready"
+        android:textSize="13sp" />
+
+</LinearLayout>

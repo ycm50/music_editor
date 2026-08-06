@@ -1,0 +1,243 @@
+# 手动触发的构建+发布工作流:
+#   1. 自动计算下一版本号 (1.1 → 1.2 → ... → 1.9 → 2.1)
+#   2. 桌面端: Windows x64 (含 Qt 运行环境) + Ubuntu amd64 .deb
+#   3. 安卓端: release APK (debug 签名)
+#   4. 打 tag 并发布 GitHub Release 到当前仓库
+name: Build & Release
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  # ── 版本号: 读取仓库最新 tag, 次版本 +1, 满 9 进位 ─────────────
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      prev: ${{ steps.compute.outputs.prev }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute next version
+        id: compute
+        shell: bash
+        run: |
+          latest=$(git tag --list | grep -E '^[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+          if [ -z "$latest" ]; then
+            echo "prev=无" >> "$GITHUB_OUTPUT"
+            echo "version=1.1" >> "$GITHUB_OUTPUT"
+          else
+            major=${latest%.*}; minor=${latest#*.}
+            if [ "$minor" -ge 9 ]; then major=$((major+1)); minor=1; else minor=$((minor+1)); fi
+            echo "prev=$latest" >> "$GITHUB_OUTPUT"
+            echo "version=$major.$minor" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Show version
+        run: echo "下一版本 = ${{ steps.compute.outputs.version }} (上一版本 = ${{ steps.compute.outputs.prev }})"
+
+  # ── 桌面 Windows x64 (原生 Windows runner: MinGW + Qt6 win64_mingw + windeployqt) ──
+  # 用与 Qt 同源的 MinGW 13.1 (install-qt-action tools_mingw1310) 编译,
+  # 避免 exe 与 Qt 的 libstdc++ 版本不匹配导致启动即失败
+  desktop-win:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt6 (win64_mingw) + 匹配的 MinGW 13.1 + Ninja
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw'
+          modules: 'qtmultimedia'   # 默认安装不含 qtmultimedia, 需显式安装
+          tools: 'tools_mingw1310,qt.tools.win64_mingw1310 tools_ninja,qt.tools.ninja'
+          cache: true
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          # 工具链已由 install-qt-action 加入 PATH (MinGW 13.1 + Ninja)
+          Write-Host "g++: $(Get-Command g++ | Select-Object -ExpandProperty Source)"
+          g++ --version
+          Write-Host "QT_ROOT_DIR=$env:QT_ROOT_DIR"
+          if ([string]::IsNullOrEmpty($env:QT_ROOT_DIR)) {
+            Write-Error "QT_ROOT_DIR 未设置 (install-qt-action 未导出)"
+            exit 1
+          }
+          $qtRoot = $env:QT_ROOT_DIR.TrimEnd('\').Replace('\', '/')
+          $qt6Cfg = "$qtRoot/lib/cmake/Qt6/Qt6Config.cmake"
+          if (-not (Test-Path $qt6Cfg)) {
+            Write-Error "Qt6 配置未找到: $qt6Cfg"
+            Get-ChildItem $qtRoot -ErrorAction SilentlyContinue | ForEach-Object { Write-Error $_.Name }
+            exit 1
+          }
+          cmake -S music_editor -B music_editor/build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_CXX_COMPILER=g++ `
+            -DQt6_DIR="$qtRoot/lib/cmake/Qt6" `
+            -DCMAKE_PREFIX_PATH="$qtRoot"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build music_editor/build --parallel 2
+
+      - name: Deploy Qt runtime (windeployqt)
+        shell: pwsh
+        run: |
+          $mingwBin = Split-Path (Get-Command g++).Source
+          $dist = Join-Path $PWD 'dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          # 1. 拷贝三个可执行文件 (windeployqt 只部署依赖, 不会拷贝应用本体)
+          Copy-Item 'music_editor\build\ui\ui.exe' $dist
+          Copy-Item 'music_editor\build\player\player.exe' $dist
+          Copy-Item 'music_editor\build\save\save.exe' $dist
+          # 2. windeployqt 部署 Qt 运行库/平台/多媒体插件到 $dist
+          windeployqt --release --no-translations --compiler-runtime `
+            (Join-Path $PWD 'music_editor\build\ui\ui.exe') -dir $dist
+          windeployqt --release --no-translations --compiler-runtime `
+            (Join-Path $PWD 'music_editor\build\player\player.exe') -dir $dist
+          # 3. MinGW 运行时 DLL 兜底 (与编译器同源的 libgcc/libstdc++/libwinpthread)
+          foreach ($dll in @('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll')) {
+            if (-not (Test-Path (Join-Path $dist $dll))) {
+              $src = Join-Path $mingwBin $dll
+              if (Test-Path $src) { Copy-Item $src $dist }
+            }
+          }
+          # 4. 校验所有二进制已就位
+          foreach ($exe in @('ui.exe', 'player.exe', 'save.exe')) {
+            if (-not (Test-Path (Join-Path $dist $exe))) {
+              Write-Error "dist 中缺少 $exe"
+              exit 1
+            }
+          }
+          Write-Host "dist 内容:"; Get-ChildItem $dist | ForEach-Object { Write-Host $_.Name }
+
+      - name: Zip (含 Qt 运行环境)
+        shell: pwsh
+        run: |
+          $V = "${{ needs.version.outputs.version }}"
+          Compress-Archive -Path (Join-Path $PWD 'dist\*') -DestinationPath "music-editor-win-x64-$V.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-win
+          path: music-editor-win-x64-${{ needs.version.outputs.version }}.zip
+
+  # ── 桌面 Ubuntu amd64 (.deb, 声明 Qt 运行依赖) ──────────────────
+  desktop-linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt6 deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev qt6-multimedia-dev ninja-build
+      - name: Configure & build
+        run: |
+          cmake -S music_editor -B music_editor/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build music_editor/build --parallel 2
+      - name: Package .deb
+        shell: bash
+        run: |
+          set -e
+          V="${{ needs.version.outputs.version }}"
+          pkg="music-editor_${V}_amd64"
+          mkdir -p "dist/$pkg/usr/bin" "dist/$pkg/usr/share/doc/music-editor" "dist/$pkg/DEBIAN"
+          cp music_editor/build/player/player music_editor/build/save/save music_editor/build/ui/ui "dist/$pkg/usr/bin/"
+          cp music_editor/readme.md "dist/$pkg/usr/share/doc/music-editor/"
+          printf '%s\n' \
+            "Package: music-editor" \
+            "Version: $V" \
+            "Section: sound" \
+            "Priority: optional" \
+            "Architecture: amd64" \
+            "Depends: libqt6core6t64, libqt6gui6t64, libqt6widgets6t64, libqt6multimedia6" \
+            "Maintainer: music_editor" \
+            "Description: RCP 简谱编辑器/播放器 (player/save/ui, C++20 + Qt6)" \
+            > "dist/$pkg/DEBIAN/control"
+          dpkg-deb --build --root-owner-group "dist/$pkg"
+          mv "dist/$pkg.deb" "dist/music-editor-ubuntu-amd64-$V.deb"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux
+          path: dist/music-editor-ubuntu-amd64-${{ needs.version.outputs.version }}.deb
+
+  # ── 安卓 release APK ─────────────────────────────────────────────
+  android:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
+      - name: Build release APK (AGP 自动下载缺失的 platform/NDK/CMake)
+        shell: bash
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          cd android
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease -PversionName="$V" -PversionCode="$(echo "$V" | tr -d '.')" --no-daemon
+      - name: Rename APK
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          cp android/app/build/outputs/apk/release/app-release.apk "android/app/build/outputs/apk/release/music-editor-android-$V.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/app/build/outputs/apk/release/music-editor-android-${{ needs.version.outputs.version }}.apk
+
+  # ── 打 tag + 发布 GitHub Release ────────────────────────────────
+  release:
+    needs: [version, desktop-win, desktop-linux, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create tag & release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -e
+          V="${{ needs.version.outputs.version }}"
+          PREV="${{ needs.version.outputs.prev }}"
+          if git rev-parse "$V" >/dev/null 2>&1; then
+            echo "标签 $V 已存在，请人工确认版本计算"; exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$V" -m "Release $V"
+          git push origin "$V"
+          if [ "$PREV" = "无" ]; then
+            notes="首次发布 music_editor $V"
+          else
+            log=$(git log --oneline --no-merges "$PREV"..HEAD | head -50 || true)
+            if [ -n "$log" ]; then
+              notes="自 $PREV 以来的变更:"$'\n'"$log"
+            else
+              notes="自 $PREV 以来的变更: 无"
+            fi
+          fi
+          gh release create "$V" \
+            --title "music_editor $V" \
+            --notes "$notes" \
+            artifacts/*
