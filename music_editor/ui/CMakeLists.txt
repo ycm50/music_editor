@@ -4,4 +4,5 @@ set_target_properties(ui PROPERTIES WIN32_EXECUTABLE TRUE)
 target_link_libraries(ui PRIVATE
     music-core
     Qt${QT_VERSION_MAJOR}::Widgets
+    Qt${QT_VERSION_MAJOR}::Network
 )

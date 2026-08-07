@@ -33,38 +33,11 @@ static std::string read_file(const std::string& path)
 
 // ── 渲染音乐 ───────────────────────────────────────────────────────
 static std::vector<float> render_rcp(const std::string& content,
-                                     const std::vector<double>& harmonics,
+                                     const std::vector<double>& fallback_harmonics,
                                      size_t* note_count = nullptr)
 {
-    std::stringstream ss(content);
-    std::string first_line;
-    std::getline(ss, first_line);
-
-    double bpm, base_freq, base_beat_dur;
-    if (!parse_rcp_header(first_line, bpm, base_freq, base_beat_dur))
-        throw std::runtime_error("Invalid RCP header: " + first_line);
-
-    NoteParser parser(base_freq, base_beat_dur);
-    std::vector<float> audio;
-    size_t notes = 0;
-
-    std::string line;
-    while (std::getline(ss, line)) {
-        std::stringstream ls(line);
-        std::string token;
-        while (ls >> token) {
-            if (token.empty()) continue;
-            ++notes;
-            auto note = parser.parse(token);
-            auto tone = generate_tone(note.frequency, note.duration_sec, harmonics);
-            audio.insert(audio.end(), tone.begin(), tone.end());
-            // ⚡ 音符间隔 50ms (问题 #3 修复: 与 player 行为一致)
-            add_gap(audio, 0.05);
-        }
-    }
-
-    if (note_count) *note_count = notes;
-    return audio;
+    // 统一 RCP 格式: 文件内可内嵌音色行(第2行)与持续比例行(第3行)
+    return render_rcp_unified(content, fallback_harmonics, 44100, nullptr, note_count);
 }
 
 // ── 主函数 ─────────────────────────────────────────────────────────

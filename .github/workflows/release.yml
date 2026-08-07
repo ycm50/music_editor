@@ -158,7 +158,7 @@ jobs:
             "Section: sound" \
             "Priority: optional" \
             "Architecture: amd64" \
-            "Depends: libqt6core6t64, libqt6gui6t64, libqt6widgets6t64, libqt6multimedia6" \
+            "Depends: libqt6core6t64, libqt6gui6t64, libqt6widgets6t64, libqt6multimedia6, libqt6network6t64" \
             "Maintainer: music_editor" \
             "Description: RCP 简谱编辑器/播放器 (player/save/ui, C++20 + Qt6)" \
             > "dist/$pkg/DEBIAN/control"

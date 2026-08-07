@@ -1,7 +1,10 @@
 package com.music.editor
 
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentValues
+import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -56,24 +59,29 @@ class MainActivity : AppCompatActivity() {
         // 生成谱: 只输出 RCP 文本本身 (第1行头部, 第2行音色, 其后音符)
         private const val SCORE_SYSTEM_PROMPT =
             "你是简谱(数字谱)创作专家。根据用户要求生成 RCP 格式简谱，只输出 RCP 内容本身，不要任何解释、前后缀、代码块标记或歌词。\n" +
-            "RCP 由三部分组成，格式严格遵守：\n" +
+            "RCP 由四部分组成，格式严格遵守：\n" +
             "第 1 行头部：BPM,基准频率(Hz),标准拍长(秒)。这三个值由你根据用户要求自行选定并保证自洽：\n" +
             "  - BPM 贴合情绪：缓慢抒情 60~90，从容中速 90~120，欢快激昂 120~180。\n" +
             "  - 基准频率决定调性（1=do 的音高），如 C=261.63、D=293.66、F=349.23，一般取 200~440；用户指定调性时按用户要求。\n" +
             "  - 标准拍长 = 60/BPM（一个四分音符的秒数），不要另外编一个对不上的数。\n" +
             "  - 三者的组合要让总时长大致符合用户要求（如\"30秒左右\"）。\n" +
-            "第 2 行音色：一组谐波振幅，用英文逗号分隔，第 1 个为基频(1倍频)振幅、第 2 个为 2 倍频振幅…依此类推，数值 0~1、可含小数，3~12 个，应贴合要求的情绪与风格。" +
+            "第 2 行音色：N 个谐波振幅，用英文逗号分隔，第 1 个为基频(1倍频)振幅、第 2 个为 2 倍频振幅…依此类推，数值 0~1、可含小数，N 取 3~12，应贴合要求的情绪与风格。" +
             "注意：振幅不必随倍频升高而递减，高倍频可以高于低倍频（如明亮、尖锐、鼻音等音色常强化高次谐波，第一个即基频通常可保持为 1）。\n" +
-            "从第 3 行开始是音符，每行音符之间只用空格分隔，禁止 |、逗号、括号、连字符、歌词等任何其他符号。\n" +
+            "第 3 行持续比例（必须写，与第 2 行一一对应，恰好 N 个，各项用英文感叹号 '!' 分隔，不要多也不要少）：每个倍频在单个音符时长内的存在区间，数值为音符时长的比例（整体为 1）。" +
+            "每个写 起点-终点：0-1 表示该倍频从始至终都有；0.3-0.5 表示只在音符的 0.3~0.5 处出现；0-0 表示该倍频所有时间不存在（静音）。" +
+            "一个倍频需要多个不连续区间时用花括号括起、内部用逗号分隔，如 {0.1-0.3,0.5-0.7}；区间末尾加 > 表示该区间内音量从第 2 行振幅逐渐降到 0，如 {0.1-0.3>,0.5-0.7} 表示 0.1~0.3 内渐弱到 0、0.5~0.7 稳定为第 2 行振幅。注意：> 只能紧跟某区间的终点数字，紧贴在 '}' 前面的区间加 > 时放在花括号内（如 {0.1-0.3>,0.5-0.7>}），严禁把 > 写在 '}' 之后或花括号外。" +
+            "用持续比例表现声音的起音/衰减/断续（如打击感强的高倍频短促出现，如 {0.05-0.3>,0.4-0.6}），不要都写 0-1。\n" +
+            "从第 4 行开始是音符，每行音符之间只用空格分隔，禁止 |、逗号、括号、连字符、歌词等任何其他符号。\n" +
             "音符格式：音级.八度标记+拍长分母\n" +
             "- 音级：1-7（do re mi fa sol la si），0 为休止。\n" +
-            "- 八度标记（必须写，不能省略）：0=中音，+=高八度，-=低八度。\n" +
+            "- 八度标记（必须写，不能省略）：0=中音，+=高八度，-=低八度，可连续（++=高两个八度，--=低两个八度）。\n" +
             "- 拍长分母：4=四分音符(1拍)、2=二分音符(2拍)、8=八分音符(半拍)、1=全音符(4拍)、16=十六分音符(四分之一拍)。\n" +
             "- 例：5.04=5音中音1拍；5.08=5音中音半拍；3.+4=mi高八度1拍；1.-4=do低八度1拍；0.04=休止1拍；0.08=休止半拍。\n" +
             "- 长音换更小的分母数字（如 5.02=2拍、5.01=4拍），不要用 - 或任何延长记号。\n" +
             "示例（欢快风格）：\n" +
             "120,392,0.25\n" +
             "1,0.7,0.5,0.3,0.2,0.1\n" +
+            "0-1!0-0.8!0-0.6!{0.1-0.3,0.5-0.7}!0-0.5!0-0.4\n" +
             "1.+8 3.+8 5.+8 6.+8 5.+8 3.+8 1.+4 0.04\n" +
             "2.+8 4.+8 6.+8 7.+8 6.+8 4.+8 2.+4 0.04\n" +
             "5.04 5.08 6.08 7.08 1.+4 0.04\n" +
@@ -160,11 +168,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == R.id.action_settings) {
-            showSettingsDialog()
-            return true
+        when (item.itemId) {
+            R.id.action_settings -> {
+                showSettingsDialog()
+                return true
+            }
+            R.id.action_copy_prompt -> {
+                copySystemPrompt()
+                return true
+            }
         }
         return super.onOptionsItemSelected(item)
+    }
+
+    /** 复制 AI 生成提示词 (SCORE_SYSTEM_PROMPT) 到剪贴板 */
+    private fun copySystemPrompt() {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("RCP 提示词", SCORE_SYSTEM_PROMPT))
+        toast(getString(R.string.prompt_copied))
     }
 
     // ── AI 设置 (OpenAI API 格式) ─────────────────────────────────
@@ -275,12 +296,13 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        // 立即用 C++ 渲染校验格式 (第 2 行音色先剥掉)
+        // 立即用 C++ 渲染校验格式 (第 2 行音色、第 3 行持续比例先剥掉)
         val stripped = normalizeNotesContent(full)
+        val sustainLine = parseSustainLine(full) ?: ""
         val formatError = try {
             val timbre = parseTimbre(full)?.toDoubleArray()
                 ?: MusicNative.getTimbreHarmonics("piano")
-            MusicNative.renderPcm(stripped, timbre, SAMPLE_RATE)
+            MusicNative.renderPcmSustain(stripped, timbre, sustainLine, SAMPLE_RATE)
             null
         } catch (e: Throwable) {
             e.message
@@ -528,6 +550,33 @@ class MainActivity : AppCompatActivity() {
         return if (harmonics.isEmpty()) null else harmonics
     }
 
+    /** 单个持续比例条目是否合法: "0-1" / "0.3-0.5" / "{0.1-0.3,0.5-0.7}" */
+    private fun isSustainToken(tok: String): Boolean {
+        val regionRe = Regex("""\d+(\.\d+)?-\d+(\.\d+)?>?""")
+        if (tok.startsWith("{")) {
+            if (!tok.endsWith("}")) return false
+            val inner = tok.substring(1, tok.length - 1)
+            if (inner.isBlank()) return false
+            return inner.split(',').all { it.trim().matches(regionRe) }
+        }
+        return tok.matches(regionRe)
+    }
+
+    /** 提取第 3 行持续比例行; 不存在或非持续比例格式返回 null */
+    private fun parseSustainLine(content: String): String? {
+        val nonEmpty = content.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toList()
+        if (nonEmpty.size < 3) return null
+        if (parseTimbre(content) == null) return null
+        val line3 = nonEmpty[2]
+        val tokens = line3.split('!').map { it.trim() }.filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return null
+        if (!tokens.all { isSustainToken(it) }) return null
+        return line3
+    }
+
     /** 去掉编辑内容的第 2 行 (音色行), 返回可交给 C++ 渲染的内容 (头部 + 音符) */
     private fun stripTimbreLine(content: String): String {
         val lines = content.lineSequence().toList()
@@ -535,9 +584,18 @@ class MainActivity : AppCompatActivity() {
         return (lines[0] + "\n" + lines.drop(2).joinToString("\n")).trim()
     }
 
-    /** 若第 2 行是音色行则剥掉, 否则原样返回 (兼容无音色行的旧格式) */
+    /** 去掉编辑内容的第 2、3 行 (音色行 + 持续比例行), 返回可渲染内容 (头部 + 音符) */
+    private fun stripTimbreAndSustainLine(content: String): String {
+        val lines = content.lineSequence().toList()
+        if (lines.size < 3) return content
+        return (lines[0] + "\n" + lines.drop(3).joinToString("\n")).trim()
+    }
+
+    /** 若第 2 行是音色行则剥掉 (第 3 行为持续比例时一并剥掉), 否则原样返回 */
     private fun normalizeNotesContent(content: String): String {
-        return if (parseTimbre(content) != null) stripTimbreLine(content) else content
+        if (parseTimbre(content) == null) return content
+        return if (parseSustainLine(content) != null) stripTimbreAndSustainLine(content)
+               else stripTimbreLine(content)
     }
 
     // ── 导入 RCP 文件 ────────────────────────────────────────────
@@ -583,6 +641,7 @@ class MainActivity : AppCompatActivity() {
         }
         val timbreList = parseTimbre(content)
         val harmonics = timbreList?.toDoubleArray() ?: MusicNative.getTimbreHarmonics("piano")
+        val sustainLine = parseSustainLine(content) ?: ""
         val stripped = normalizeNotesContent(content)
 
         playing = true
@@ -596,7 +655,7 @@ class MainActivity : AppCompatActivity() {
 
         executor.execute {
             try {
-                val pcm = MusicNative.renderPcm(stripped, harmonics, SAMPLE_RATE)
+                val pcm = MusicNative.renderPcmSustain(stripped, harmonics, sustainLine, SAMPLE_RATE)
                 if (pcm.isEmpty()) {
                     mainHandler.post { toast(getString(R.string.error_no_audio)) }
                     return@execute
@@ -680,6 +739,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val harmonics = currentHarmonics()
+        val sustainLine = parseSustainLine(content) ?: ""
         val stripped = normalizeNotesContent(content)
         val timbreName = "custom"
 
@@ -688,7 +748,7 @@ class MainActivity : AppCompatActivity() {
 
         executor.execute {
             try {
-                val wav = MusicNative.renderWav(stripped, harmonics, SAMPLE_RATE)
+                val wav = MusicNative.renderWavSustain(stripped, harmonics, sustainLine, SAMPLE_RATE)
                 val name = "music_${timbreName}_${System.currentTimeMillis()}.wav"
                 val uri = saveToDownloads(name, wav)
                 mainHandler.post {

@@ -7,4 +7,9 @@
         android:title="@string/menu_settings"
         app:showAsAction="ifRoom|withText" />
 
+    <item
+        android:id="@+id/action_copy_prompt"
+        android:title="@string/menu_copy_prompt"
+        app:showAsAction="never" />
+
 </menu>

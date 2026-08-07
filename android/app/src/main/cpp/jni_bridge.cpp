@@ -25,7 +25,8 @@
 // 解析 RCP 内容 → 生成波形, 音符之间加 50ms 间隔 (与 player/save 对齐)
 static std::vector<float> render_rcp(const std::string& content,
                                      const std::vector<double>& harmonics,
-                                     int sample_rate)
+                                     int sample_rate,
+                                     const std::vector<HarmonicSustain>& sustain = {})
 {
     // 去除 UTF-8 BOM (从 Windows 记事本等粘贴的内容可能带有)
     size_t start = 0;
@@ -55,7 +56,7 @@ static std::vector<float> render_rcp(const std::string& content,
             if (token.empty()) continue;
             auto note = parser.parse(token);
             auto tone = generate_tone(note.frequency, note.duration_sec,
-                                      harmonics, sample_rate);
+                                      harmonics, sample_rate, sustain);
             audio.insert(audio.end(), tone.begin(), tone.end());
             add_gap(audio, 0.05, sample_rate);  // 音符间隔 50ms
         }
@@ -117,6 +118,10 @@ static std::vector<double> jdoublearray_to_std(JNIEnv* env, jdoubleArray arr)
     return h;
 }
 
+// ── 公共渲染入口 (前向声明) ──────────────────────────────────────
+static jbyteArray render_pcm_or_wav(JNIEnv* env, jstring content, jdoubleArray harmonics,
+                                    jstring sustainLine, jint sample_rate, bool want_wav);
+
 // ── 1. getTimbres(): String[] ─────────────────────────────────────
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_music_editor_MusicNative_getTimbres(JNIEnv* env, jclass /*clazz*/)
@@ -161,22 +166,17 @@ Java_com_music_editor_MusicNative_renderPcm(JNIEnv* env, jclass /*clazz*/,
                                             jstring content, jdoubleArray harmonics,
                                             jint sample_rate)
 {
-    try {
-        std::string content_str = jstring_to_std(env, content);
-        auto h = jdoublearray_to_std(env, harmonics);
-        if (h.empty()) {
-            const Timbre* t = Timbres::find_by_name("piano");
-            h = t->harmonics;
-        }
+    return render_pcm_or_wav(env, content, harmonics, nullptr, sample_rate, false);
+}
 
-        auto audio = render_rcp(content_str, h, sample_rate);
-        auto pcm   = to_pcm16(audio);
-        return bytes_to_jbytearray(env, pcm.data(),
-                                   pcm.size() * sizeof(int16_t));
-    } catch (const std::exception& e) {
-        throw_runtime(env, e.what());
-        return nullptr;
-    }
+// ── 3b. renderPcmSustain(content, harmonics, sustainLine, sampleRate): byte[] ──
+// sustainLine: 第三行持续比例 (各倍频的时间窗口), 空格分隔, 可空
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_music_editor_MusicNative_renderPcmSustain(JNIEnv* env, jclass /*clazz*/,
+                                                   jstring content, jdoubleArray harmonics,
+                                                   jstring sustainLine, jint sample_rate)
+{
+    return render_pcm_or_wav(env, content, harmonics, sustainLine, sample_rate, false);
 }
 
 // ── 4. renderWav(content, harmonics, sampleRate): byte[] ──────────
@@ -186,6 +186,22 @@ Java_com_music_editor_MusicNative_renderWav(JNIEnv* env, jclass /*clazz*/,
                                             jstring content, jdoubleArray harmonics,
                                             jint sample_rate)
 {
+    return render_pcm_or_wav(env, content, harmonics, nullptr, sample_rate, true);
+}
+
+// ── 4b. renderWavSustain(content, harmonics, sustainLine, sampleRate): byte[] ──
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_music_editor_MusicNative_renderWavSustain(JNIEnv* env, jclass /*clazz*/,
+                                                   jstring content, jdoubleArray harmonics,
+                                                   jstring sustainLine, jint sample_rate)
+{
+    return render_pcm_or_wav(env, content, harmonics, sustainLine, sample_rate, true);
+}
+
+// ── 公共渲染入口 (PCM / WAV) ──────────────────────────────────────
+static jbyteArray render_pcm_or_wav(JNIEnv* env, jstring content, jdoubleArray harmonics,
+                                    jstring sustainLine, jint sample_rate, bool want_wav)
+{
     try {
         std::string content_str = jstring_to_std(env, content);
         auto h = jdoublearray_to_std(env, harmonics);
@@ -194,10 +210,20 @@ Java_com_music_editor_MusicNative_renderWav(JNIEnv* env, jclass /*clazz*/,
             h = t->harmonics;
         }
 
-        auto audio = render_rcp(content_str, h, sample_rate);
+        // 解析第三行持续比例 (可为空 → 全程恒有)
+        std::vector<HarmonicSustain> sustain;
+        std::string sustain_str = jstring_to_std(env, sustainLine);
+        if (!sustain_str.empty())
+            sustain = parse_sustain_line(sustain_str);
+
+        auto audio = render_rcp(content_str, h, sample_rate, sustain);
         auto pcm   = to_pcm16(audio);
-        auto wav   = encode_wav(pcm, sample_rate);
-        return bytes_to_jbytearray(env, wav.data(), wav.size());
+
+        if (want_wav) {
+            auto wav = encode_wav(pcm, sample_rate);
+            return bytes_to_jbytearray(env, wav.data(), wav.size());
+        }
+        return bytes_to_jbytearray(env, pcm.data(), pcm.size() * sizeof(int16_t));
     } catch (const std::exception& e) {
         throw_runtime(env, e.what());
         return nullptr;

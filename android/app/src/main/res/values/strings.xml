@@ -23,6 +23,8 @@
     <string name="error_ai_settings">请先点右上角"设置"填写 Base URL 和 API Key</string>
     <string name="error_ai_call">AI 调用失败: %1$s</string>
     <string name="menu_settings">设置</string>
+    <string name="menu_copy_prompt">复制提示词</string>
+    <string name="prompt_copied">提示词已复制到剪贴板</string>
     <string name="settings_base_url">Base URL</string>
     <string name="settings_api_key">API Key</string>
     <string name="settings_model">模型</string>

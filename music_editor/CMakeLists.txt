@@ -28,5 +28,5 @@ add_subdirectory(player)
 add_subdirectory(save)
 
 # ── UI executable (Qt Widgets) ─────────────────────────────────────
-find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets REQUIRED)
+find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets Network REQUIRED)
 add_subdirectory(ui)

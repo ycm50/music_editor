@@ -53,17 +53,17 @@ Note NoteParser::parse(std::string_view note_str) const
         // 中音
         octave_offset = 0;
         beat_str = suffix.substr(1);
-    } else if (suffix[0] == '-') {
-        // 低八度
-        octave_offset = -1;
-        beat_str = suffix.substr(1);
-    } else if (suffix[0] == '+') {
-        // 高八度
-        octave_offset = 1;
-        beat_str = suffix.substr(1);
     } else {
-        throw std::invalid_argument(
-            "Invalid octave marker (must be 0/+/-): " + std::string(note_str));
+        // 低/高八度: 支持连续标记 (++ = 高两个八度, -- = 低两个八度)
+        size_t i = 0;
+        while (i < suffix.size() && (suffix[i] == '+' || suffix[i] == '-')) {
+            octave_offset += (suffix[i] == '+') ? 1 : -1;
+            ++i;
+        }
+        if (i == 0)
+            throw std::invalid_argument(
+                "Invalid octave marker (must be 0/+/-): " + std::string(note_str));
+        beat_str = suffix.substr(i);
     }
 
     // 把 ':' 换回 '.' (连音表示)

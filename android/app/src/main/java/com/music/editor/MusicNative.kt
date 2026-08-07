@@ -29,4 +29,14 @@ object MusicNative {
 
     /** 将 RCP 文本渲染为完整 WAV 文件字节, 供导出/分享. */
     external fun renderWav(content: String, harmonics: DoubleArray, sampleRate: Int): ByteArray
+
+    /**
+     * 带持续比例渲染为 16-bit PCM.
+     * sustainLine: 第三行持续比例, 空格分隔, 每项对应一个倍频,
+     * 形如 "0-1 0.3-0.5 {0.1-0.3,0.5-0.7}", 可传空串表示全程恒有.
+     */
+    external fun renderPcmSustain(content: String, harmonics: DoubleArray, sustainLine: String, sampleRate: Int): ByteArray
+
+    /** 带持续比例渲染为完整 WAV 文件字节, 供导出/分享. */
+    external fun renderWavSustain(content: String, harmonics: DoubleArray, sustainLine: String, sampleRate: Int): ByteArray
 }
