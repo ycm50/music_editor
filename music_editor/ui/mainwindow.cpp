@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "tone_gen.h"
+#include "ai_prompt.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -33,38 +34,15 @@
 
 #include <sstream>
 #include <fstream>
+#include <cmath>
 
-// ── AI 生成提示词 (与手机端一致) ──────────────────────────────────
-static const QString SCORE_SYSTEM_PROMPT =
-    "你是简谱(数字谱)创作专家。根据用户要求生成 RCP 格式简谱，只输出 RCP 内容本身，不要任何解释、前后缀、代码块标记或歌词。\n"
-    "RCP 由四部分组成，格式严格遵守：\n"
-    "第 1 行头部：BPM,基准频率(Hz),标准拍长(秒)。这三个值由你根据用户要求自行选定并保证自洽：\n"
-    "  - BPM 贴合情绪：缓慢抒情 60~90，从容中速 90~120，欢快激昂 120~180。\n"
-    "  - 基准频率决定调性（1=do 的音高），如 C=261.63、D=293.66、F=349.23，一般取 200~440；用户指定调性时按用户要求。\n"
-    "  - 标准拍长 = 60/BPM（一个四分音符的秒数），不要另外编一个对不上的数。\n"
-    "  - 三者的组合要让总时长大致符合用户要求（如\"30秒左右\"）。\n"
-    "第 2 行音色：N 个谐波振幅，用英文逗号分隔，第 1 个为基频(1倍频)振幅、第 2 个为 2 倍频振幅…依此类推，数值 0~1、可含小数，N 取 3~12，应贴合要求的情绪与风格。"
-    "注意：振幅不必随倍频升高而递减，高倍频可以高于低倍频（如明亮、尖锐、鼻音等音色常强化高次谐波，第一个即基频通常可保持为 1）。\n"
-    "第 3 行持续比例（必须写，与第 2 行一一对应，恰好 N 个，各项用英文感叹号 '!' 分隔，不要多也不要少）：每个倍频在单个音符时长内的存在区间，数值为音符时长的比例（整体为 1）。"
-    "每个写 起点-终点：0-1 表示该倍频从始至终都有；0.3-0.5 表示只在音符的 0.3~0.5 处出现；0-0 表示该倍频所有时间不存在（静音）。"
-    "一个倍频需要多个不连续区间时用花括号括起、内部用逗号分隔，如 {0.1-0.3,0.5-0.7}；区间末尾加 > 表示该区间内音量从第 2 行振幅逐渐降到 0，如 {0.1-0.3>,0.5-0.7} 表示 0.1~0.3 内渐弱到 0、0.5~0.7 稳定为第 2 行振幅。注意：> 只能紧跟某区间的终点数字，紧贴在 '}' 前面的区间加 > 时放在花括号内（如 {0.1-0.3>,0.5-0.7>}），严禁把 > 写在 '}' 之后或花括号外。"
-    "用持续比例表现声音的起音/衰减/断续（如打击感强的高倍频短促出现，如 {0.05-0.3>,0.4-0.6}），不要都写 0-1。\n"
-    "从第 4 行开始是音符，每行音符之间只用空格分隔，禁止 |、逗号、括号、连字符、歌词等任何其他符号。\n"
-    "音符格式：音级.八度标记+拍长分母\n"
-    "- 音级：1-7（do re mi fa sol la si），0 为休止。\n"
-    "- 八度标记（必须写，不能省略）：0=中音，+=高八度，-=低八度，可连续（++=高两个八度，--=低两个八度）。\n"
-    "- 拍长分母：4=四分音符(1拍)、2=二分音符(2拍)、8=八分音符(半拍)、1=全音符(4拍)、16=十六分音符(四分之一拍)。\n"
-    "- 例：5.04=5音中音1拍；5.08=5音中音半拍；3.+4=mi高八度1拍；1.-4=do低八度1拍；0.04=休止1拍；0.08=休止半拍。\n"
-    "- 长音换更小的分母数字（如 5.02=2拍、5.01=4拍），不要用 - 或任何延长记号。\n"
-    "示例（欢快风格）：\n"
-    "120,392,0.25\n"
-    "1,0.7,0.5,0.3,0.2,0.1\n"
-    "0-1!0-0.8!0-0.6!{0.1-0.3,0.5-0.7}!0-0.5!0-0.4\n"
-    "1.+8 3.+8 5.+8 6.+8 5.+8 3.+8 1.+4 0.04\n"
-    "2.+8 4.+8 6.+8 7.+8 6.+8 4.+8 2.+4 0.04\n"
-    "5.04 5.08 6.08 7.08 1.+4 0.04\n"
-    "创作要求：旋律、BPM、调性(基准频率)与音色都要贴合用户要求的情绪、风格与大致时长；"
-    "欢快旋律多用 + 高八度音（1.+8、3.+8、5.+8 等）和 8/16 分音符，避免长音和低音。";
+// ── AI 生成提示词 ────────────────────────────────────────────────
+// 正文定义在 core/ai_prompt.cpp (桌面端与安卓端共用的唯一来源, 见 ai_prompt.h)
+static QString ai_score_prompt()
+{
+    const std::string_view p = score_system_prompt_view();
+    return QString::fromUtf8(p.data(), static_cast<int>(p.size()));
+}
 
 // ── 构造 / 析构 ──────────────────────────────────────────────────
 MainWindow::MainWindow(QWidget* parent)
@@ -342,7 +320,7 @@ void MainWindow::on_player_finished(int exit_code, QProcess::ExitStatus status)
     if (status == QProcess::CrashExit) {
         statusBar()->showMessage("播放器异常退出");
     } else if (exit_code != 0) {
-        QString err = player_proc_ ? player_proc_->readAllStandardError() : "";
+        QString err = player_proc_ ? QString::fromUtf8(player_proc_->readAllStandardError()) : QString();
         statusBar()->showMessage("播放出错 (code " + QString::number(exit_code) + "): " + err);
     } else {
         statusBar()->showMessage("播放完成");
@@ -406,11 +384,11 @@ void MainWindow::on_save_finished(int exit_code, QProcess::ExitStatus /*status*/
 {
     QString output_path = save_proc_ ? save_proc_->arguments().last() : QString();
     if (exit_code != 0) {
-        QString err = save_proc_ ? save_proc_->readAllStandardError() : "";
+        QString err = save_proc_ ? QString::fromUtf8(save_proc_->readAllStandardError()) : QString();
         QMessageBox::warning(this, "错误",
             "WAV 导出失败 (code " + QString::number(exit_code) + "):\n" + err);
     } else {
-        QString out = save_proc_ ? save_proc_->readAllStandardOutput() : "";
+        QString out = save_proc_ ? QString::fromUtf8(save_proc_->readAllStandardOutput()) : QString();
         statusBar()->showMessage("导出完成: " + output_path);
 
         auto reply = QMessageBox::question(this, "导出成功", out + "\n是否打开文件所在文件夹？",
@@ -563,7 +541,7 @@ void MainWindow::on_generate()
 
 void MainWindow::on_copy_prompt()
 {
-    QApplication::clipboard()->setText(SCORE_SYSTEM_PROMPT);
+    QApplication::clipboard()->setText(ai_score_prompt());
     toast("提示词已复制到剪贴板");
 }
 
@@ -581,7 +559,7 @@ void MainWindow::start_generate(const QString& requirement, bool include_context
     llm_accum_.clear();
 
     set_generating(true, "正在生成谱…");
-    stream_llm(SCORE_SYSTEM_PROMPT, user_prompt);
+    stream_llm(ai_score_prompt(), user_prompt);
 }
 
 void MainWindow::stream_llm(const QString& system_prompt, const QString& user_prompt)
@@ -734,11 +712,35 @@ void MainWindow::handle_llm_done(const QString& full)
 QString MainWindow::validate_rcp(const QString& content)
 {
     try {
-        // 以钢琴音色为回退, 文件内嵌音色优先
-        auto audio = render_rcp_unified(content.toStdString(), Timbres::PIANO.harmonics, 44100);
+        // 用严格模式: token 语法错误直接抛出并带行号, 用户能立刻看到"第几行哪个 token"写错。
+        // (实际播放走容错模式: 坏 token 跳过并在状态栏提示, 其余照常演奏)
+        RcpDocument doc = parse_rcp_strict(content.toStdString());
+        if (doc.notes.empty())
+            return "未解析到任何音符";
+
+        RenderOptions opt;
+        opt.stereo = false;
+        opt.reverb_wet = 0.0;
+        RenderStats st;
+        auto audio = render_document(doc, opt, &st);
         if (audio.empty())
-            return "未生成音频";
-        return {};
+            return "未生成音频 (可能全部为休止符)";
+
+        QStringList issues;
+        for (const auto& w : st.warnings)
+            issues << QString::fromStdString(w);
+
+        if (st.dc_offset > 1e-4)
+            issues << QString("检测到直流偏置 %1 (异常)").arg(st.dc_offset);
+        if (st.discarded_total > 0)
+            issues << QString("%1 个分音越过 Nyquist 被丢弃 (可降低八度)")
+                          .arg(st.discarded_total);
+        if (st.bar_sec > 0.0 && std::abs(st.bar_fit_error) > 0.02)
+            issues << QString("音符总长与小节不对齐, 偏差 %1 s").arg(st.bar_fit_error, 0, 'f', 3);
+        if (st.clipped_ratio > 0.001)
+            issues << QString("削波占比 %1%").arg(st.clipped_ratio * 100.0, 0, 'f', 3);
+
+        return issues.join("; ");
     } catch (const std::exception& e) {
         return QString::fromUtf8(e.what());
     }

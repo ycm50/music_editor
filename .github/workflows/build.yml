@@ -1,0 +1,343 @@
+# 多平台构建矩阵
+#
+# 触发: 手动 (workflow_dispatch) / 打 tag / 被其他 workflow 复用 (workflow_call)
+# 产物: 各平台归档 + 安卓 APK, 命名统一为 music-editor-<os>-<arch>-<版本>.<ext>
+#
+# 本仓库唯一的 workflow (原 ci.yml / release.yml 已移除)。
+# 覆盖目标:
+#   Windows x86_64   MinGW + Qt6 win64_mingw     windeployqt 打包
+#   Windows aarch64  MSVC 交叉编译: x64 host -> arm64 target
+#                    Qt6 win64_msvc2022_arm64_cross_compiled (+ 同版本 x64 host Qt)
+#   Linux   x86_64   apt qt6 (原生)
+#   Linux   aarch64  ubuntu-24.04-arm 原生 runner + apt qt6
+#   Android aarch64/x86_64  NDK + Qt 无关
+#
+# 关于 Windows aarch64 (6.8.x 实测):
+#   Qt 官方没有 Windows ARM64 的 MinGW/llvm-mingw 二进制包, 只有 MSVC 构建, 且分两个 arch:
+#     · win64_msvc2022_arm64_cross_compiled  x64 主机交叉编译 (windows-latest 用这个)
+#     · win64_msvc2022_arm64                 原生 ARM64 主机安装 (只有 windows-11-arm runner 能用)
+#   注意: 在 x64 runner 上写 arch: win64_msvc2022_arm64 会直接失败 —— 6.8.x 的
+#   下载仓库里根本没有这个包 (aqt 直接 exit 1), 交叉包的名字必须带 _cross_compiled。
+#   交叉包只含 ARM64 二进制, 因此还必须有一份同版本 x64 host Qt: aqt 用
+#   --autodesktop 自动装好 (install-qt-action 会带上), 再把 QT_HOST_PATH 指过去,
+#   否则 moc/rcc/uic 这些 host 工具在 x64 上跑不了。
+#   交叉产物是 ARM64 exe, 在 x64 runner 上无法执行, 所以这个 job 不跑 ctest,
+#   改为在收集产物时校验 PE 头 (Machine == 0xAA64)。
+#   若确实要走 llvm-mingw, 参见文件末尾的注释块。
+name: Build Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (产物命名 + 安卓 versionCode; 留空则用 dev)'
+        required: false
+        type: string
+  push:
+    tags: ['*']
+  workflow_call:
+    inputs:
+      version:
+        description: 版本号 (用于产物命名)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x86_64:
+    name: Windows x86_64 (MinGW + Qt6)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Qt6 (win64_mingw) + 同源 MinGW 13.1 + Ninja
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_mingw'
+          modules: 'qtmultimedia'
+          tools: 'tools_mingw1310,qt.tools.win64_mingw1310 tools_ninja,qt.tools.ninja'
+          cache: true
+
+      - name: 配置
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrEmpty($env:QT_ROOT_DIR)) { Write-Error "QT_ROOT_DIR 未设置"; exit 1 }
+          $qtRoot = $env:QT_ROOT_DIR.TrimEnd('\').Replace('\', '/')
+          cmake -S music_editor -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_CXX_COMPILER=g++ `
+            -DQt6_DIR="$qtRoot/lib/cmake/Qt6" `
+            -DCMAKE_PREFIX_PATH="$qtRoot"
+
+      - name: 构建
+        run: cmake --build build --parallel 2
+
+      - name: 测试 (ctest)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: 部署 Qt 运行时 (windeployqt)
+        shell: pwsh
+        run: |
+          $mingwBin = Split-Path (Get-Command g++).Source
+          $dist = Join-Path $PWD 'dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Copy-Item 'build\ui\ui.exe' $dist
+          Copy-Item 'build\player\player.exe' $dist
+          Copy-Item 'build\save\save.exe' $dist
+          windeployqt --release --no-translations --compiler-runtime (Join-Path $PWD 'build\ui\ui.exe') -dir $dist
+          windeployqt --release --no-translations --compiler-runtime (Join-Path $PWD 'build\player\player.exe') -dir $dist
+          foreach ($dll in @('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll')) {
+            if (-not (Test-Path (Join-Path $dist $dll))) {
+              $src = Join-Path $mingwBin $dll
+              if (Test-Path $src) { Copy-Item $src $dist }
+            }
+          }
+          foreach ($exe in @('ui.exe', 'player.exe', 'save.exe')) {
+            if (-not (Test-Path (Join-Path $dist $exe))) { Write-Error "dist 缺少 $exe"; exit 1 }
+          }
+
+      - name: 打包 zip
+        shell: pwsh
+        run: |
+          $V = "${{ inputs.version }}"
+          if ([string]::IsNullOrEmpty($V)) { $V = "dev" }
+          Compress-Archive -Path (Join-Path $PWD 'dist\*') -DestinationPath "music-editor-windows-x86_64-$V.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: music-editor-windows-x86_64-*.zip
+
+  windows-aarch64:
+    name: Windows aarch64 (MSVC arm64 交叉编译 + Qt6)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Qt6 (win64_msvc2022_arm64_cross_compiled + x64 host Qt)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: 'windows'
+          target: 'desktop'
+          # 交叉编译包 (只含 ARM64 二进制); 6.8.x 无原生 win64_msvc2022_arm64 包
+          arch: 'win64_msvc2022_arm64_cross_compiled'
+          modules: 'qtmultimedia'
+          cache: true
+
+      - name: 准备 MSVC 交叉编译环境 (amd64 host -> arm64 target)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: 配置 (x64 host -> arm64 target)
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrEmpty($env:QT_ROOT_DIR)) { Write-Error "QT_ROOT_DIR 未设置"; exit 1 }
+          $qtTarget = $env:QT_ROOT_DIR.TrimEnd('\')
+          $qtPrefix = Split-Path $qtTarget -Parent          # ...\6.8.3
+          $toolchain = Join-Path $qtTarget 'lib\cmake\Qt6\qt.toolchain.cmake'
+
+          # host Qt (x64): 优先用 install-qt-action 设好的 QT_HOST_PATH, 否则找同版本的 msvc2022_64
+          $qtHost = $env:QT_HOST_PATH
+          if ([string]::IsNullOrEmpty($qtHost) -or -not (Test-Path (Join-Path $qtHost 'lib\cmake\Qt6'))) {
+            $candidate = Join-Path $qtPrefix 'msvc2022_64'
+            if (Test-Path (Join-Path $candidate 'lib\cmake\Qt6')) { $qtHost = $candidate }
+          }
+          if ([string]::IsNullOrEmpty($qtHost) -or -not (Test-Path (Join-Path $qtHost 'lib\cmake\Qt6'))) {
+            Write-Error "找不到 x64 host Qt (QT_HOST_PATH); $qtPrefix 下有: $((Get-ChildItem $qtPrefix).Name -join ', ')"
+            exit 1
+          }
+
+          Write-Host "target Qt : $qtTarget"
+          Write-Host "host Qt   : $qtHost"
+
+          # 显式指定 cl, 避免 runner 上自带的 MinGW g++ 被优先选中
+          $cmakeArgs = @(
+            '-S', 'music_editor', '-B', 'build', '-G', 'Ninja',
+            '-DCMAKE_BUILD_TYPE=Release',
+            '-DCMAKE_C_COMPILER=cl',
+            '-DCMAKE_CXX_COMPILER=cl',
+            "-DQT_HOST_PATH=$qtHost",
+            "-DCMAKE_PREFIX_PATH=$qtTarget"
+          )
+          # 交叉包通常带 qt.toolchain.cmake; 万一这份 Qt 没有, 只靠 QT_HOST_PATH 也继续
+          if (Test-Path $toolchain) {
+            Write-Host "toolchain : $toolchain"
+            $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$toolchain"
+          } else {
+            Write-Warning "没有 qt.toolchain.cmake ($toolchain); 仅用 QT_HOST_PATH 继续"
+            Write-Warning "lib/cmake/Qt6 内容: $((Get-ChildItem (Split-Path $toolchain -Parent) -ErrorAction SilentlyContinue).Name -join ', ')"
+          }
+          cmake @cmakeArgs
+
+      - name: 构建
+        run: cmake --build build --parallel 2
+
+      # 说明: ARM64 exe 无法在 x64 runner 上执行, 因此这里没有 ctest。
+      # 编译正确性由 "收集产物" 里的 PE 头校验兜底。
+      - name: 收集产物 (校验产物确实是 ARM64)
+        shell: pwsh
+        run: |
+          $dist = Join-Path $PWD 'dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          Get-ChildItem -Path build -Recurse -Include ui.exe,player.exe,save.exe |
+            ForEach-Object { Copy-Item $_.FullName $dist -Force }
+
+          # PE 头 e_machine: 0x8664 = x64, 0xAA64 = ARM64
+          function Get-PeMachine([string]$Path) {
+            $fs = [System.IO.File]::OpenRead($Path)
+            try {
+              $br = New-Object System.IO.BinaryReader($fs)
+              $fs.Position = 0x3C
+              $peOffset = $br.ReadInt32()
+              $fs.Position = $peOffset
+              if ($br.ReadUInt32() -ne 0x00004550) { return 0 }
+              return $br.ReadUInt16()
+            } finally { $fs.Dispose() }
+          }
+
+          foreach ($exe in @('ui.exe', 'player.exe', 'save.exe')) {
+            $p = Join-Path $dist $exe
+            if (-not (Test-Path $p)) { Write-Error "缺少 $exe"; exit 1 }
+            $machine = Get-PeMachine $p
+            if ($machine -ne 0xAA64) {
+              Write-Error ("{0} 不是 ARM64 产物 (e_machine=0x{1:X4}, 0x8664=x64)" -f $exe, $machine)
+              exit 1
+            }
+            Write-Host ("OK {0} -> ARM64 (0x{1:X4})" -f $exe, $machine)
+          }
+          Write-Host "提示: 该产物需要 Qt6 arm64 运行时; windeployqt 不支持交叉部署, 需在 ARM64 机器上补部署"
+
+      - name: 打包 zip
+        shell: pwsh
+        run: |
+          $V = "${{ inputs.version }}"
+          if ([string]::IsNullOrEmpty($V)) { $V = "dev" }
+          Compress-Archive -Path (Join-Path $PWD 'dist\*') -DestinationPath "music-editor-windows-aarch64-$V.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-aarch64
+          path: music-editor-windows-aarch64-*.zip
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Qt6 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ qt6-base-dev qt6-multimedia-dev
+
+      - name: 配置并构建
+        run: |
+          cmake -S music_editor -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMUSIC_BUILD_TOOLS=ON
+          cmake --build build --parallel 2
+
+      - name: 测试 (ctest)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: 合成一致性
+        run: bash ci/check_metrics.sh build/save/save ci/metrics_golden.txt
+
+      - name: 打包 tar.gz
+        run: |
+          V="${{ inputs.version }}"; [ -z "$V" ] && V=dev
+          name="music-editor-linux-${{ matrix.arch }}-$V"
+          mkdir -p "dist/$name"
+          cp build/player/player build/save/save build/ui/ui "dist/$name/"
+          cp music_editor/readme.md README.md "dist/$name/"
+          tar -C dist -czf "$name.tar.gz" "$name"
+          ls -lh *.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: music-editor-linux-${{ matrix.arch }}-*.tar.gz
+
+  android:
+    name: 安卓 APK (release)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # setup-android@v3 的默认 packages 是 'tools platform-tools', 而 Google 已下线
+      # 废弃的 'tools' 包, sdkmanager 会以 "Failed to find package 'tools'" 退出 1,
+      # 导致 job 在安装 SDK 这一步就失败 (android-actions/setup-android#537)。
+      # v4 默认已改为 cmdline-tools/platform-tools; 这里再显式写死 packages,
+      # 免得以后默认值又被上游改动。
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: 接受许可
+        run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+      - name: 构建 release APK (AGP 自动下载 platform/NDK/CMake)
+        run: |
+          V="${{ inputs.version }}"; [ -z "$V" ] && V=dev
+          # versionCode 必须是整数: 手写 "dev" 会让 build.gradle.kts 的 toInt() 抛
+          # "For input string: \"dev\"" 而失败, 所以只取版本号里的数字, 没有数字就退化为 1
+          VC="$(echo "$V" | tr -cd '0-9')"; [ -z "$VC" ] && VC=1
+          cd android
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease \
+            -PversionName="$V" \
+            -PversionCode="$VC" \
+            --no-daemon
+
+      - name: 重命名 APK
+        run: |
+          V="${{ inputs.version }}"; [ -z "$V" ] && V=dev
+          cp android/app/build/outputs/apk/release/app-release.apk \
+             "music-editor-android-$V.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: music-editor-android-*.apk
+
+# ─────────────────────────────────────────────────────────────────
+# 备选方案 (Windows aarch64)
+#
+# 1) 原生 ARM64 runner: 把 job 的 runs-on 换成 windows-11-arm,
+#    arch 换成 win64_msvc2022_arm64 (原生包), 此时可以正常跑 ctest 和 windeployqt。
+#    注意 GitHub 对公共仓库的 windows-11-arm runner 目前可用性/配额有限。
+#
+# 2) 坚持用 llvm-mingw: Qt 的 win64_llvm_mingw 包实测是 **x86_64** 目标
+#    (归档名形如 ...-Clang-Windows-Windows_11_23H2-X86_64.7z), 不能用来出 ARM64 产物,
+#    必须自建 Qt。示意步骤:
+#     1. 解压 llvm-mingw (aarch64-w64-mingw32)
+#     2. 拉取 qtbase (含 qtmultimedia) 源码
+#     3. configure -release -static -platform win32-g++ \
+#          -device-option CROSS_COMPILE=<llvm-mingw>/bin/aarch64-w64-mingw32- \
+#          -xplatform win32-g++ -nomake examples -nomake tests \
+#          -skip qtwebengine -submodules qtbase,qtmultimedia
+#     4. cmake --build . --parallel
+#    缓存 ~/qt-arm64 才能把耗时压到可接受范围; 首次构建通常 30~60 分钟。
+#    这也是为什么默认走上面的 MSVC 交叉编译 —— 那是 Qt 官方支持的路径。
+# ─────────────────────────────────────────────────────────────────

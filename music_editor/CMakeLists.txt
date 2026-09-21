@@ -5,6 +5,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
+# CTest: 在根目录开启, 子目录里注册的测试才可见 (CI 用 ctest 一条命令全跑)
+enable_testing()
+
+# 仓库根 (music_editor/ 的上一级): tools/ 里定位 demos、assets 等仓库内文件用
+get_filename_component(MUSIC_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+
 # ── Core static library (no Qt dependency) ──────────────────────────
 add_subdirectory(core)
 
@@ -30,3 +36,9 @@ add_subdirectory(save)
 # ── UI executable (Qt Widgets) ─────────────────────────────────────
 find_package(Qt${QT_VERSION_MAJOR} COMPONENTS Widgets Network REQUIRED)
 add_subdirectory(ui)
+
+# ── 自检工具 (纯 C++, 无 Qt): test_syntax / check_prompt ────────────
+option(MUSIC_BUILD_TOOLS "构建自检工具 (tools/)" ON)
+if(MUSIC_BUILD_TOOLS)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../tools ${CMAKE_BINARY_DIR}/tools)
+endif()

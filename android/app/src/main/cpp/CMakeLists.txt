@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ── 纯 C++ 核心库 (与桌面版 music_editor/core 同源, 复用同一份源码) ──
-# note_parser / tone_gen / wav_writer 不依赖任何 Android/Qt 特性
+# note_parser / tone_gen / wav_writer / ai_prompt 不依赖任何 Android/Qt 特性
 # monorepo 内直接引用桌面端源码目录, 避免两份拷贝漂移
 # 从 android/app/src/main/cpp 上溯 5 层到仓库根: ../../../../../music_editor/core
 set(MUSIC_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../music_editor/core")
@@ -16,6 +16,7 @@ add_library(music-core STATIC
     ${MUSIC_CORE_DIR}/note_parser.cpp
     ${MUSIC_CORE_DIR}/tone_gen.cpp
     ${MUSIC_CORE_DIR}/wav_writer.cpp
+    ${MUSIC_CORE_DIR}/ai_prompt.cpp
 )
 target_include_directories(music-core PUBLIC ${MUSIC_CORE_DIR})
 

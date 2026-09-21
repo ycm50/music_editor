@@ -1,0 +1,35 @@
+# 统一换行符为 LF, 避免同一文件在不同编辑器/平台上被整文件改写而污染 diff。
+#
+# 背景: 曾出现 .rcp / .kt / mainwindow.cpp 的真实改动仅 1~39 行, 却因换行符被
+#       整体改成 CRLF 而产生 160~837 行的噪声 diff。这里按类型显式固定 eol。
+#
+# 说明: 显式列举而非用 `* text=auto`, 是为了不动 .bat —— Windows 批处理对
+#       LF 的兼容性依赖 cmd 版本, 保守起见不纳入。
+
+*.h        text eol=lf
+*.hpp      text eol=lf
+*.cpp      text eol=lf
+*.cc       text eol=lf
+*.kt       text eol=lf
+*.java     text eol=lf
+*.txt      text eol=lf
+*.md       text eol=lf
+*.rcp      text eol=lf
+*.json     text eol=lf
+*.xml      text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.gradle   text eol=lf
+*.kts      text eol=lf
+*.pro      text eol=lf
+*.sh       text eol=lf
+CMakeLists.txt text eol=lf
+
+# 二进制/音频, 明确不做换行转换
+*.wav      binary
+*.png      binary
+*.jpg      binary
+*.ico      binary
+*.jar      binary
+*.apk      binary
+*.keystore binary

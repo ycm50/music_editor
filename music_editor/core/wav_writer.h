@@ -22,12 +22,14 @@ std::vector<uint8_t> encode_wav(const std::vector<int16_t>& pcm,
                                 int channels = 1);
 
 /**
- * 将 float32 采样数据写入 WAV 文件 (16-bit PCM, mono)
+ * 将 float32 采样数据写入 WAV 文件 (16-bit PCM)
+ *
+ * 立体声时 samples 为左右交错 (L,R,L,R...), 帧数 = samples.size()/channels
  *
  * @param path          输出路径
  * @param samples       float32 采样, 值域 [-1.0, 1.0]
  * @param sample_rate   采样率 (Hz)
- * @param channels      声道数 (默认 1)
+ * @param channels      声道数 (1 = 单声道, 2 = 立体声交错)
  * @return true 成功, false 失败 (打开/写入错误)
  */
 bool write_wav(std::string_view path,

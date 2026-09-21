@@ -69,6 +69,7 @@ bool write_wav(std::string_view path,
 {
     if (samples.empty()) return false;
     if (sample_rate <= 0 || channels <= 0) return false;
+    if (samples.size() % static_cast<size_t>(channels) != 0) return false;  // 帧必须完整
 
     // float32 → int16 (clamp)
     std::vector<int16_t> pcm(samples.size());

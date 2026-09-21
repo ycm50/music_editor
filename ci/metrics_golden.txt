@@ -1,0 +1,6 @@
+01_piano_nocturne.rcp events=108 samples=5267833 dur=119.451995 peak=0.795358 rms=0.128882 dc=-4.992e-08 crest=15.807432 clip=0.000000 silent=0.021071 discarded=0 chords=15 poly=3 fit=0.000000 fmin=130.812783 fmax=783.990872
+02_timbre_compare.rcp events=78 samples=2782710 dur=63.100000 peak=0.796705 rms=0.144767 dc=-1.409e-07 crest=14.812545 clip=0.000000 silent=0.036940 discarded=0 chords=12 poly=2 fit=0.000000 fmin=130.812783 fmax=440.000000
+03_musicbox_jingle_bells.rcp events=81 samples=2528729 dur=57.340794 peak=0.803410 rms=0.112343 dc=-1.599e-07 crest=17.087817 clip=0.000000 silent=0.033510 discarded=0 chords=16 poly=2 fit=0.000000 fmin=261.625565 fmax=493.883301
+04_organ_minuet.rcp events=96 samples=2255715 dur=51.150000 peak=0.798912 rms=0.170005 dc=8.064e-09 crest=13.440767 clip=0.000000 silent=0.044154 discarded=0 chords=16 poly=2 fit=0.000000 fmin=97.998859 fmax=329.627557
+05_harp_pentatonic.rcp events=116 samples=4838828 dur=109.723991 peak=0.841383 rms=0.107031 dc=-1.815e-08 crest=17.909649 clip=0.000000 silent=0.023466 discarded=0 chords=15 poly=3 fit=0.000000 fmin=130.812783 fmax=880.000000
+06_piano_chords.rcp events=64 samples=4838828 dur=109.723991 peak=0.799038 rms=0.093928 dc=1.319e-08 crest=18.595458 clip=0.000000 silent=0.025354 discarded=0 chords=16 poly=3 fit=0.000000 fmin=261.625565 fmax=659.255114

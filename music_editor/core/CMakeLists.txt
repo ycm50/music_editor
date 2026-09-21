@@ -2,6 +2,7 @@ add_library(music-core STATIC
     note_parser.cpp
     tone_gen.cpp
     wav_writer.cpp
+    ai_prompt.cpp
 )
 
 target_include_directories(music-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

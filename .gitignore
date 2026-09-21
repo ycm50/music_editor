@@ -10,15 +10,45 @@ android/.externalNativeBuild/
 android/.cxx/
 android/local.properties
 *.apk
+*.aab
+*.keystore
+*.jks
 
 # ── 桌面端 music_editor ─────────────────────────
 music_editor/build/
+build/
 music_editor/__pycache__/
+__pycache__/
 *.pyc
-*.wav
-.tmp_*
 
-# ── 通用 ────────────────────────────────────────
+# ── 自检工具 / CMake 产物 ───────────────────────
+tools/*.exe
+tools/*.o
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+build.ninja
+.ninja_deps
+.ninja_log
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# ── 音频与渲染产物 ──────────────────────────────
+*.wav
+*.mp3
+*.flac
+demos/out/
+out/
+dist/
+output_*.wav
+.tmp_*
+_reg*.wav
+
+# ── 平台/编辑器 ─────────────────────────────────
+.vscode/
 .DS_Store
+Thumbs.db
 *.iml
+*.user
 aqtinstall.log
