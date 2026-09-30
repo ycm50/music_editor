@@ -16,8 +16,25 @@ object MusicNative {
         System.loadLibrary("music-native")
     }
 
-    /** 可用物理乐器名称列表 (piano / violin / flute / guitar / harp / bells / music_box / organ) */
+    /** 可用物理乐器名称列表 (33 种: piano/guzheng/erhu/dizi/bells/...) */
     external fun getInstruments(): Array<String>
+
+    /** 乐器预设目录: 每项 "名称|分类|说明" (供插入面板的预设列表) */
+    external fun getPresetCatalog(): Array<String>
+
+    /**
+     * 由勾选项构造一个 RCP 音符 token (与桌面端共用一个构造器)。
+     *
+     * spec 形如 "degree=1;acc=0;oct=0;den=4;dot=0;tup=0;vel=mf;art=0;rep=1;voice=0;
+     * chord=3.04,5.04;pos=0.125;damper=0.08" — 未给出的键用默认值。
+     */
+    external fun buildNoteToken(spec: String): String
+
+    /** "@timbre <名称>" 一行 */
+    external fun buildTimbreLine(name: String): String
+
+    /** 预设的全部物理参数展开成 "@acoustic ..." 一行 (可直接替换文件内乐器) */
+    external fun buildAcousticLine(name: String): String
 
     /** 旧式裸谐波音色名称列表 (piano / violin / flute) */
     external fun getTimbres(): Array<String>

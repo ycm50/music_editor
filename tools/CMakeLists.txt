@@ -12,10 +12,15 @@ target_link_libraries(test_syntax PRIVATE music-core)
 add_executable(check_prompt check_prompt.cpp)
 target_link_libraries(check_prompt PRIVATE music-core)
 
+# 物理模型自检: 分音数/重心/力度音色/制音器/硬切/声像/构造器往返
+add_executable(test_physics test_physics.cpp)
+target_link_libraries(test_physics PRIVATE music-core)
+
 # ── 注册到 CTest: CI 上一条 `ctest --output-on-failure` 即可全跑 ──
 # (enable_testing() 由根 CMakeLists 调用)
 add_test(NAME syntax COMMAND test_syntax)
 add_test(NAME prompt COMMAND check_prompt)
+add_test(NAME physics COMMAND test_physics)
 
 # 校验仓库内所有乐谱: 严格解析 + 小节对齐 + 无削波/直流
 # MUSIC_CORE_DIR / MUSIC_REPO_ROOT 由上层 CMake 传入 (工作区可能在符号链接/联接路径下,

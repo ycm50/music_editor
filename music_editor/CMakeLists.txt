@@ -5,6 +5,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
+# ── 浮点可复现性 ────────────────────────────────────────────────────
+# GCC/Clang 默认 -ffp-contract=fast 会把 a*b+c 收缩成一条 FMA; FMA 在 aarch64/NEON 上
+# 是默认可用指令, 于是同一份乐谱在 arm64 与 x86_64 上会得到不同的尾数 —— 跨平台
+# 合成一致性 (ci/check_metrics.sh) 会因此漂移。这里显式关掉收缩, 让不同架构/编译器的
+# 结果在 1e-6 量级内一致 (MSVC 默认 /fp:precise, 本来就不收缩)。
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-ffp-contract=off)
+endif()
+
 # CTest: 在根目录开启, 子目录里注册的测试才可见 (CI 用 ctest 一条命令全跑)
 enable_testing()
 

@@ -49,4 +49,78 @@
     <string name="error_no_audio">未能生成音频，请检查 RCP 格式</string>
     <string name="error_render">渲染失败: %1$s</string>
     <string name="error_export_fail">导出失败</string>
+
+    <!-- 插入音符 / 乐器预设 (与桌面端"插入面板"对等) -->
+    <string name="action_insert">插入音符/乐器</string>
+    <string name="insert_title">插入音符</string>
+    <string name="insert_degree">音级</string>
+    <string name="insert_accidental">变音</string>
+    <string name="insert_octave">八度</string>
+    <string name="insert_denominator">拍长</string>
+    <string name="insert_dotted">附点 (时值 ×1.5)</string>
+    <string name="insert_tuplet">连音</string>
+    <string name="insert_velocity">力度</string>
+    <string name="insert_articulation">演奏法</string>
+    <string name="insert_tie">与前音相连 (时值相加)</string>
+    <string name="insert_repeat">重复次数 (1~32)</string>
+    <string name="insert_voice">声部 (0=不插入)</string>
+    <string name="insert_chord">和弦成员</string>
+    <string name="insert_chord_hint">形如 3.04,5.04, 留空=单音</string>
+    <string name="insert_override_head">逐音物理覆盖 (勾选才写入)</string>
+    <string name="insert_ov_atk">起音 atk (秒)</string>
+    <string name="insert_ov_dec">衰减 dec (秒)</string>
+    <string name="insert_ov_sus">稳态 sus (0~1)</string>
+    <string name="insert_ov_br">亮度 br (0~1)</string>
+    <string name="insert_ov_b">非谐性 b</string>
+    <string name="insert_ov_pos">激励点 pos (x/L)</string>
+    <string name="insert_ov_damper">制音器 damper (秒)</string>
+    <string name="insert_preview">预览 (实时由 C++ 构造器生成)</string>
+    <string name="insert_to_cursor">插入到光标处</string>
+    <string name="insert_append_end">追加到文末</string>
+    <string name="insert_preset_entry">乐器预设…</string>
+    <string name="insert_preview_failed">构造失败: %1$s</string>
+    <string name="insert_note_empty">没有可插入的音符</string>
+    <string name="menu_insert_failed">插入失败: %1$s</string>
+    <string name="preset_title">乐器预设</string>
+    <string name="preset_empty">未获取到乐器预设列表</string>
+    <string name="preset_insert_timbre">插入 @timbre 行</string>
+    <string name="preset_insert_acoustic">插入 @acoustic 行</string>
+    <string name="preset_inserted">已插入: %1$s</string>
+    <string name="preset_no_acoustic">预设 %1$s 没有可用的声学参数</string>
+
+    <string-array name="insert_degree_items">
+        <item>1 do</item>
+        <item>2 re</item>
+        <item>3 mi</item>
+        <item>4 fa</item>
+        <item>5 sol</item>
+        <item>6 la</item>
+        <item>7 si</item>
+        <item>0 休止</item>
+    </string-array>
+    <string-array name="insert_accidental_items">
+        <item>无</item>
+        <item>升号 #</item>
+        <item>降号 b</item>
+        <item>重升 ##</item>
+        <item>重降 bb</item>
+    </string-array>
+    <string-array name="insert_denominator_items">
+        <item>全音符 1 (4拍)</item>
+        <item>二分 2 (2拍)</item>
+        <item>四分 4 (1拍)</item>
+        <item>八分 8 (半拍)</item>
+        <item>十六分 16</item>
+        <item>三十二分 32</item>
+    </string-array>
+    <string-array name="insert_tuplet_items">
+        <item>无</item>
+        <item>三连音 t</item>
+        <item>五连音 q</item>
+    </string-array>
+    <string-array name="insert_articulation_items">
+        <item>自动</item>
+        <item>连奏 ~</item>
+        <item>断奏 \'</item>
+    </string-array>
 </resources>

@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Typeface
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -16,13 +17,20 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
@@ -143,6 +151,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
+            R.id.action_insert -> {
+                showInsertDialog()
+                return true
+            }
             R.id.action_settings -> {
                 showSettingsDialog()
                 return true
@@ -228,6 +240,400 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.dialog_cancel, null)
             .show()
+    }
+
+    // ── 插入音符 / 乐器预设 (安卓端对等桌面端"插入面板") ──────────
+
+    /** 打开插入对话框: 勾选 + 填参数, token 一律由 C++ core/note_builder 生成 */
+    private fun showInsertDialog() {
+        val pad = resources.getDimensionPixelSize(R.dimen.screen_padding)
+
+        val container = LinearLayout(this)
+        container.orientation = LinearLayout.VERTICAL
+        container.setPadding(pad, pad, pad, pad)
+
+        // ── 音高 ──
+        val degreeValues = listOf(1, 2, 3, 4, 5, 6, 7, 0)   // 末项 = 休止
+        val spDegree = Spinner(this)
+        bindSpinner(spDegree, resources.getStringArray(R.array.insert_degree_items).toList())
+        spDegree.setSelection(0)
+
+        val accValues = listOf(0, 1, -1, 2, -2)
+        val spAcc = Spinner(this)
+        bindSpinner(spAcc, resources.getStringArray(R.array.insert_accidental_items).toList())
+
+        val octValues = (0..8).map { it - 4 }
+        val octLabels = octValues.map { if (it > 0) "+$it" else "$it" }
+        val spOct = Spinner(this)
+        bindSpinner(spOct, octLabels)
+        spOct.setSelection(4)   // 0 = 中音
+
+        // ── 时值 ──
+        val denValues = listOf(1, 2, 4, 8, 16, 32)
+        val spDen = Spinner(this)
+        bindSpinner(spDen, resources.getStringArray(R.array.insert_denominator_items).toList())
+        spDen.setSelection(2)   // 四分音符 = 1 拍
+
+        val chkDotted = CheckBox(this)
+        chkDotted.text = getString(R.string.insert_dotted)
+
+        val tupValues = listOf(0, 3, 5)
+        val spTup = Spinner(this)
+        bindSpinner(spTup, resources.getStringArray(R.array.insert_tuplet_items).toList())
+
+        // ── 力度 / 演奏法 ──
+        val velNames = listOf("ppp", "pp", "p", "mp", "mf", "f", "ff", "fff")
+        val spVel = Spinner(this)
+        bindSpinner(spVel, velNames)
+        spVel.setSelection(6)   // ff: 与 C++ NoteSpec 的默认力度一致
+
+        val artValues = listOf(0, 1, 2)
+        val spArt = Spinner(this)
+        bindSpinner(spArt, resources.getStringArray(R.array.insert_articulation_items).toList())
+
+        // ── 连音 / 重复 / 声部 / 和弦 ──
+        val chkTie = CheckBox(this)
+        chkTie.text = getString(R.string.insert_tie)
+
+        val etRepeat = EditText(this)
+        etRepeat.inputType = InputType.TYPE_CLASS_NUMBER
+        etRepeat.setText("1")
+
+        val etVoice = EditText(this)
+        etVoice.inputType = InputType.TYPE_CLASS_NUMBER
+        etVoice.setText("0")
+
+        val etChord = EditText(this)
+        etChord.inputType = InputType.TYPE_CLASS_TEXT
+        etChord.setHint(R.string.insert_chord_hint)
+
+        // ── 逐音物理覆盖 (勾选后才写进 spec) ──
+        val ovRows = arrayListOf<Pair<CheckBox, EditText>>()
+        fun addOvRow(label: String, defValue: String) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            val cb = CheckBox(this)
+            cb.text = label
+            val et = EditText(this)
+            et.inputType = InputType.TYPE_CLASS_NUMBER or
+                InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED
+            et.setText(defValue)
+            et.isEnabled = false
+            row.addView(cb)
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            row.addView(et, lp)
+            container.addView(row)
+            ovRows.add(Pair(cb, et))
+        }
+
+        val tvOvHead = TextView(this)
+        tvOvHead.text = getString(R.string.insert_override_head)
+
+        // ── 预览 ──
+        val tvPreview = TextView(this)
+        tvPreview.text = getString(R.string.insert_preview)
+        val preview = TextView(this)
+        preview.typeface = Typeface.MONOSPACE
+
+        // ── 乐器预设入口 ──
+        val btnPreset = Button(this)
+        btnPreset.text = getString(R.string.insert_preset_entry)
+
+        // ── 组装: 单行 = 标签 + 控件 ──
+        fun addRow(label: String, child: View) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            val tv = TextView(this)
+            tv.text = label
+            row.addView(tv)
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            row.addView(child, lp)
+            container.addView(row)
+        }
+        addRow(getString(R.string.insert_degree), spDegree)
+        addRow(getString(R.string.insert_accidental), spAcc)
+        addRow(getString(R.string.insert_octave), spOct)
+        addRow(getString(R.string.insert_denominator), spDen)
+        addRow(getString(R.string.insert_tuplet), spTup)
+        addRow(getString(R.string.insert_velocity), spVel)
+        addRow(getString(R.string.insert_articulation), spArt)
+        container.addView(chkDotted)
+        addRow(getString(R.string.insert_repeat), etRepeat)
+        addRow(getString(R.string.insert_voice), etVoice)
+        addRow(getString(R.string.insert_chord), etChord)
+        container.addView(chkTie)
+        container.addView(tvOvHead)
+        addOvRow(getString(R.string.insert_ov_atk), "0.010")
+        addOvRow(getString(R.string.insert_ov_dec), "1.000")
+        addOvRow(getString(R.string.insert_ov_sus), "0.50")
+        addOvRow(getString(R.string.insert_ov_br), "0.70")
+        addOvRow(getString(R.string.insert_ov_b), "0.0002")
+        addOvRow(getString(R.string.insert_ov_pos), "0.125")
+        addOvRow(getString(R.string.insert_ov_damper), "0.080")
+        container.addView(tvPreview)
+        container.addView(preview)
+        container.addView(btnPreset)
+
+        // ── spec 组装 (未给出的键由 C++ 用默认值) ──
+        fun pick(values: List<Int>, spinner: Spinner): Int {
+            val p = spinner.selectedItemPosition
+            return if (p >= 0 && p < values.size) values[p] else values[0]
+        }
+        fun readInt(et: EditText, def: Int): Int {
+            val v = et.text.toString().trim()
+            return if (v.isEmpty()) def else (v.toIntOrNull() ?: def)
+        }
+        fun buildSpec(): String {
+            val sb = StringBuilder()
+            sb.append("degree=").append(pick(degreeValues, spDegree))
+            sb.append(";acc=").append(pick(accValues, spAcc))
+            sb.append(";oct=").append(pick(octValues, spOct))
+            sb.append(";den=").append(pick(denValues, spDen))
+            sb.append(";dot=").append(if (chkDotted.isChecked) 1 else 0)
+            sb.append(";tup=").append(pick(tupValues, spTup))
+            sb.append(";tie=").append(if (chkTie.isChecked) 1 else 0)
+            sb.append(";art=").append(pick(artValues, spArt))
+            sb.append(";rep=").append(readInt(etRepeat, 1).coerceIn(1, 32))
+            sb.append(";voice=").append(readInt(etVoice, 0).coerceIn(0, 8))
+            sb.append(";vel=").append(velNames[spVel.selectedItemPosition.coerceIn(0, velNames.size - 1)])
+            sb.append(";chord=").append(etChord.text.toString().trim())
+            // 逐音物理覆盖: 勾选且填了数值才写入
+            val ovKeys = listOf("atk", "dec", "sus", "br", "b", "pos", "damper")
+            for (i in ovRows.indices) {
+                if (i >= ovKeys.size) break
+                val cb = ovRows[i].first
+                val et = ovRows[i].second
+                if (!cb.isChecked) continue
+                val v = et.text.toString().trim()
+                if (v.isEmpty()) continue
+                sb.append(";").append(ovKeys[i]).append("=").append(v)
+            }
+            return sb.toString()
+        }
+        fun refreshPreview() {
+            val token = try {
+                MusicNative.buildNoteToken(buildSpec())
+            } catch (e: Throwable) {
+                getString(R.string.insert_preview_failed, e.message ?: "")
+            }
+            preview.text = token
+        }
+        fun currentToken(): String {
+            return try {
+                MusicNative.buildNoteToken(buildSpec())
+            } catch (e: Throwable) {
+                toast(getString(R.string.menu_insert_failed, e.message ?: ""))
+                ""
+            }
+        }
+
+        // ── 任何控件变化都刷新预览 ──
+        val watcher = object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                refreshPreview()
+            }
+        }
+        etRepeat.addTextChangedListener(watcher)
+        etVoice.addTextChangedListener(watcher)
+        etChord.addTextChangedListener(watcher)
+        for (r in ovRows) {
+            val cb = r.first
+            val et = r.second
+            cb.setOnCheckedChangeListener { _, checked ->
+                et.isEnabled = checked
+                refreshPreview()
+            }
+            et.addTextChangedListener(watcher)
+        }
+        val onSpinner = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                refreshPreview()
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+        spDegree.setOnItemSelectedListener(onSpinner)
+        spAcc.setOnItemSelectedListener(onSpinner)
+        spOct.setOnItemSelectedListener(onSpinner)
+        spDen.setOnItemSelectedListener(onSpinner)
+        spTup.setOnItemSelectedListener(onSpinner)
+        spVel.setOnItemSelectedListener(onSpinner)
+        spArt.setOnItemSelectedListener(onSpinner)
+        chkDotted.setOnCheckedChangeListener { _, _ -> refreshPreview() }
+        chkTie.setOnCheckedChangeListener { _, _ -> refreshPreview() }
+
+        val scroll = ScrollView(this)
+        scroll.addView(container)
+
+        val builder = AlertDialog.Builder(this)
+            .setTitle(R.string.insert_title)
+            .setView(scroll)
+            .setPositiveButton(R.string.insert_to_cursor) { _, _ ->
+                val token = currentToken()
+                if (token.isEmpty()) {
+                    toast(getString(R.string.insert_note_empty))
+                } else {
+                    insertAtCursor(token)
+                }
+            }
+            .setNeutralButton(R.string.insert_append_end) { _, _ ->
+                val token = currentToken()
+                if (token.isEmpty()) {
+                    toast(getString(R.string.insert_note_empty))
+                } else {
+                    appendToEnd(token)
+                }
+            }
+            .setNegativeButton(R.string.dialog_cancel, null)
+        val dlg = builder.create()
+        btnPreset.setOnClickListener {
+            dlg.dismiss()
+            showPresetDialog()
+        }
+        dlg.show()
+        refreshPreview()
+    }
+
+    /** 给 Spinner 装上字符串适配器 (与 showSettingsDialog 同一风格) */
+    private fun bindSpinner(spinner: Spinner, items: List<String>) {
+        spinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, items)
+    }
+
+    /** 在编辑器光标处插入 token, 必要时前后补空格 (与桌面端 insert_text 一致) */
+    private fun insertAtCursor(token: String) {
+        if (token.isEmpty()) return
+        val editable = editor.text
+        val start = editor.selectionStart.coerceIn(0, editable.length)
+        val end = editor.selectionEnd.coerceIn(0, editable.length)
+        val from = minOf(start, end)
+        val to = maxOf(start, end)
+        val before = editable.subSequence(0, from).toString()
+        val after = editable.subSequence(to, editable.length).toString()
+        val needPre = before.isNotEmpty() && !before.endsWith(" ") &&
+            !before.endsWith("\n") && !before.endsWith("\t")
+        val needPost = after.isNotEmpty() && !after.startsWith(" ") &&
+            !after.startsWith("\n") && !after.startsWith("\t")
+        val text = (if (needPre) " " else "") + token + (if (needPost) " " else "")
+        editable.replace(from, to, text)
+        editor.setSelection(from + text.length)
+    }
+
+    /** 追加到编辑器文末 (与已有内容之间补一个换行) */
+    private fun appendToEnd(token: String) {
+        if (token.isEmpty()) return
+        val editable = editor.text
+        val at = editable.length
+        val needNewline = at > 0 && !editable.toString().endsWith("\n")
+        val text = (if (needNewline) "\n" else "") + token
+        editable.replace(at, at, text)
+        editor.setSelection(at + text.length)
+    }
+
+    /** 乐器预设列表: 每项 "名称|分类|说明" (来自 C++ 内置乐器目录) */
+    private fun showPresetDialog() {
+        val catalog = try {
+            MusicNative.getPresetCatalog()
+        } catch (e: Throwable) {
+            toast(getString(R.string.menu_insert_failed, e.message ?: ""))
+            return
+        }
+        if (catalog.isEmpty()) {
+            toast(getString(R.string.preset_empty))
+            return
+        }
+        val items = catalog.map { presetLabel(it) }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.preset_title)
+            .setItems(items.toTypedArray()) { _, which ->
+                if (which in catalog.indices) onPresetPicked(catalog[which])
+            }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    /** "名称|分类|说明" → "分类 · 名称 · 说明" (缺项自动跳过) */
+    private fun presetLabel(entry: String): String {
+        val parts = entry.split('|')
+        val name = parts.getOrNull(0).orEmpty()
+        val category = parts.getOrNull(1).orEmpty()
+        val desc = parts.getOrNull(2).orEmpty()
+        val sb = StringBuilder()
+        if (category.isNotEmpty()) sb.append(category).append(" · ")
+        sb.append(name)
+        if (desc.isNotEmpty()) sb.append(" · ").append(desc)
+        return sb.toString()
+    }
+
+    /** 选中一个预设: 可插入 @timbre 行, 或插入完整 @acoustic 行 */
+    private fun onPresetPicked(entry: String) {
+        val name = entry.split('|').getOrNull(0).orEmpty()
+        if (name.isEmpty()) return
+        AlertDialog.Builder(this)
+            .setTitle(presetLabel(entry))
+            .setPositiveButton(R.string.preset_insert_timbre) { _, _ -> applyTimbrePreset(name) }
+            .setNeutralButton(R.string.preset_insert_acoustic) { _, _ -> applyAcousticPreset(name) }
+            .setNegativeButton(R.string.dialog_cancel, null)
+            .show()
+    }
+
+    /** 插入 "@timbre 名称" 行 (已有同类行则替换) */
+    private fun applyTimbrePreset(name: String) {
+        val line = try {
+            MusicNative.buildTimbreLine(name)
+        } catch (e: Throwable) {
+            toast(getString(R.string.menu_insert_failed, e.message ?: ""))
+            return
+        }
+        if (line.isBlank()) {
+            toast(getString(R.string.menu_insert_failed, name))
+            return
+        }
+        // 旧别名 @instrument 也算同类行
+        applyDirectiveLine(listOf("@timbre", "@instrument"), line)
+    }
+
+    /** 插入完整 "@acoustic ..." 行 (已有同类行则替换) */
+    private fun applyAcousticPreset(name: String) {
+        val line = try {
+            MusicNative.buildAcousticLine(name)
+        } catch (e: Throwable) {
+            toast(getString(R.string.menu_insert_failed, e.message ?: ""))
+            return
+        }
+        if (line.isBlank()) {
+            toast(getString(R.string.preset_no_acoustic, name))
+            return
+        }
+        applyDirectiveLine(listOf("@acoustic"), line)
+    }
+
+    /** 把以 prefixes 之一开头的行替换为 line; 没有则插到头部 ("BPM,ref,beat") 之后 */
+    private fun applyDirectiveLine(prefixes: List<String>, line: String) {
+        val lines = editor.text.toString().split('\n').toMutableList()
+        var replaced = -1
+        for (i in lines.indices) {
+            val t = lines[i].trim()
+            if (prefixes.any { t.startsWith(it) }) {
+                lines[i] = line
+                replaced = i
+                break
+            }
+        }
+        if (replaced < 0) {
+            var pos = 0
+            val header = Regex("""^\s*\d+(\.\d+)?\s*,""")
+            for (i in lines.indices) {
+                if (header.containsMatchIn(lines[i])) {
+                    pos = i + 1
+                    break
+                }
+            }
+            lines.add(pos, line)
+        }
+        editor.setText(lines.joinToString("\n"))
+        editor.setSelection(editor.text.length)
+        toast(getString(R.string.preset_inserted, line))
     }
 
     // ── AI 生成乐谱 (流式输出) ────────────────────────────────────

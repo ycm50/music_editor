@@ -89,21 +89,43 @@ static void resolve_timbre(RcpDocument& doc, const std::string& name)
                              " (用 --list 查看可用列表)");
 }
 
+static const char* arti_name(const AcousticParams& p)
+{
+    if (p.partial_table.size()) return "非谐分音表";
+    if (p.sustain >= 0.6) return "持续激励";
+    if (p.damper > 0.0) return "有制音器";
+    return "自由余音";
+}
+
 static void print_list()
 {
-    std::cout << "物理乐器 (@timbre / --timbre, 支持完整物理模型):\n";
+    std::string cat;
+    std::cout << "物理乐器预设 (@timbre / --timbre; 共 " << Instruments::all().size() << " 种)\n";
+    std::cout << "  名称         分类         B@C4    α   倾斜   τ₁(s)  制音   起音    稳态  激励点  弦组   音色类型\n";
     for (const auto& p : Instruments::all()) {
+        const std::string c = Instruments::category_of(p.name);
+        if (c != cat) { cat = c; std::cout << "  ── " << c << " ──\n"; }
         std::cout << "  " << std::left << std::setw(12) << p.name
-                  << " B=" << std::setw(8) << p.inharmonicity
-                  << " damp=" << std::setw(5) << p.decay << "s"
-                  << " atk=" << std::setw(6) << p.attack << "s"
-                  << " sus=" << std::setw(5) << p.sustain
-                  << " br=" << std::setw(5) << p.brightness
-                  << " noise=" << p.noise << "\n";
+                  << " " << std::setw(10) << "" 
+                  << " " << std::setw(7) << p.inharmonicity
+                  << " " << std::setw(5) << p.inharm_alpha
+                  << " " << std::setw(5) << p.tilt_db_oct
+                  << " " << std::setw(6) << p.decay
+                  << " " << std::setw(6) << p.damper
+                  << " " << std::setw(6) << p.attack
+                  << " " << std::setw(5) << p.sustain
+                  << " " << std::setw(6) << p.strike_pos
+                  << " " << std::setw(2) << p.unison << "/" << std::setw(4) << p.detune_cents
+                  << " " << arti_name(p) << "\n";
     }
+    std::cout << "\n键说明: B@C4=非谐性(α 使其随音高上升) 倾斜=源频谱 dB/oct  τ₁=基频衰减 制音=制音器 τ(0=无)\n"
+                 "        激励点=x/L(拨/击弦位置, 决定梳状零点)  弦组=同音弦数/失谐(音分)\n";
     std::cout << "\n旧式裸谐波音色 (只有频谱, 无衰减/非谐性):\n";
     for (const auto& t : Timbres::all())
         std::cout << "  " << t.name << " (" << t.harmonics.size() << " 谐波)\n";
+    std::cout << "\n自定义: @acoustic <名> B=2e-4;alpha=1.6;tilt=6;damp=2.5;n2=0.02;damper=0.09;pos=0.125;posp=1.6;\n"
+                 "                    body=180:1.4:4,1400:1.2:3;hpf=85:6;uni=3;detune=0.9;\n"
+                 "                    vtilt=5;velatk=0.45;beta=0.3;phase=coherent;table=1:1:2,4:0.4:0.5\n";
 }
 
 // ── 体检报告 ───────────────────────────────────────────────────────
@@ -131,13 +153,30 @@ static void print_analysis(const RcpDocument& doc,
 
     std::cout << "\n-- 波形指标 --\n";
     std::cout << "峰值 / RMS : " << st.peak << " / " << st.rms
-              << "   峰均比 " << st.crest_db << " dB\n";
+              << "   峰均比 " << st.crest_db << " dB   真峰值 " << st.true_peak << "\n";
+    std::cout << "响度       : " << st.lufs << " LUFS\n";
     std::cout << "直流偏置   : " << std::scientific << st.dc_offset << std::fixed
               << "   (|DC|<1e-4 为合格)\n";
     std::cout << "静音占比   : " << st.silence_ratio * 100.0 << " %\n";
     std::cout << "削波占比   : " << st.clipped_ratio * 100.0 << " %\n";
-    std::cout << "混叠分音   : " << st.discarded_total << " 个被丢弃 (Nyquist="
-              << sample_rate / 2 << " Hz)\n";
+    std::cout << "最大跳变   : " << st.max_jump << " @ " << st.max_jump_at << " s"
+              << "   (带限信号本身可达 1~2, 仅供参考)\n";
+    std::cout << "咔哒检测   : 硬切音块 " << st.boundary_glitches << " 个"
+              << "   孤立跳变 " << st.click_ratio << " 倍 @ " << st.click_at
+              << " s (起音瞬态本身就会很大, 仅供参考)\n";
+    std::cout << "分音上限裁剪: " << st.discarded_total << " 个 (Nyquist="
+              << sample_rate / 2 << " Hz; >0 表示低音区带宽受 maxp 限制, 可调大 maxp=)\n";
+
+    std::cout << "\n-- 物理指标 --\n";
+    std::cout << "发声长度   : " << st.ring_min_sec << " ~ " << st.ring_max_sec
+              << " s (含制音器/自然余音, 与记谱时值解耦)\n";
+    std::cout << "实测衰减   : T30 " << st.t30_min_sec << " ~ " << st.t30_max_sec << " s\n";
+    std::cout << "分音数     : " << st.partials_min << " ~ " << st.partials_max
+              << " (随 f0 伸缩: 低音多, 高音少)\n";
+    std::cout << "重心/基频  : " << st.centroid_ratio_min << " ~ " << st.centroid_ratio_max
+              << " (音色随音区变化; 旧模型恒为常数)\n";
+    std::cout << "被截断事件 : " << st.truncated_notes << " 个"
+              << "   (0 = 每个音都按物理衰减完)\n";
 
     if (st.bar_sec > 0.0) {
         std::cout << "\n-- 节拍校验 (@meter " << doc.meter_num << "/" << doc.meter_den << ") --\n";
@@ -154,22 +193,28 @@ static void print_analysis(const RcpDocument& doc,
     if (note_detail > 0 && !st.notes.empty()) {
         std::cout << "\n-- 逐音明细 (前 " << std::min<int>(note_detail, (int)st.notes.size())
                   << " 个) --\n";
-        std::cout << "  #   频率(Hz)  音名    时长(s)  力度  分音 混叠  重心(Hz)  τ1(s)\n";
+        std::cout << "  #   音名    记谱(s) 余音(s) 力度  分音 实测  重心   实测重心 起音(ms) T30(s) B(f0)  截断\n";
         for (int i = 0; i < note_detail && i < (int)st.notes.size(); ++i) {
             const auto& n = st.notes[i];
             std::cout << "  " << std::setw(3) << n.index << "  ";
             if (n.rest) {
-                std::cout << "  (休止)                    " << std::setw(6) << n.duration_sec << "\n";
+                std::cout << "(休止)                                         "
+                          << std::setw(6) << n.duration_sec << "\n";
                 continue;
             }
-            std::cout << std::setw(9) << n.frequency << "  "
-                      << std::setw(6) << pitch_name(n.frequency) << "  "
-                      << std::setw(7) << n.duration_sec << "  "
+            std::cout << std::setw(6) << pitch_name(n.frequency) << "  "
+                      << std::setw(7) << n.duration_sec << " "
+                      << std::setw(7) << n.ring_sec << " "
                       << std::setw(4) << n.velocity << "  "
                       << std::setw(4) << n.partials << " "
-                      << std::setw(4) << n.discarded << "  "
-                      << std::setw(8) << n.centroid_hz << "  "
-                      << std::setw(6) << n.tau1_sec << "\n";
+                      << std::setw(4) << n.meas_partials << " "
+                      << std::setw(7) << n.centroid_hz << " "
+                      << std::setw(8) << n.meas_centroid_hz << " "
+                      << std::setw(7) << (n.attack_sec * 1000.0) << " "
+                      << std::setw(6) << n.t30_sec << " "
+                      << std::scientific << std::setprecision(1) << n.b_used
+                      << std::fixed << std::setprecision(3)
+                      << (n.truncated ? "  是" : "  否") << "\n";
         }
     }
     line();
@@ -201,7 +246,15 @@ static void print_metrics(const std::string& name, const RenderStats& st, int no
        // 架构/编译器下不一致, 导致 CI 一致性比对假失败
        << " fit=" << (std::abs(st.bar_fit_error) < 1e-3 ? 0.0 : st.bar_fit_error)
        << " fmin=" << st.freq_min
-       << " fmax=" << st.freq_max;
+       << " fmax=" << st.freq_max
+       << " tp=" << std::setprecision(6) << st.true_peak
+       << " jump=" << st.max_jump
+       << " glitch=" << st.boundary_glitches
+       << " trunc=" << st.truncated_notes
+       << " pmin=" << st.partials_min
+       << " pmax=" << st.partials_max
+       << " crmin=" << std::setprecision(4) << st.centroid_ratio_min
+       << " crmax=" << st.centroid_ratio_max;
     std::cout << os.str() << "\n";
 }
 
@@ -229,6 +282,10 @@ static int run_check(const RcpDocument& doc, const RenderStats& st)
         problems.push_back("削波占比过高: " + std::to_string(st.clipped_ratio * 100.0) + "%");
     if (std::abs(st.dc_offset) >= 1e-4)
         problems.push_back("存在直流偏置: " + std::to_string(st.dc_offset));
+    if (st.boundary_glitches > 0) {
+        problems.push_back("存在硬切音块 " + std::to_string(st.boundary_glitches)
+                           + " 个 (音块首尾未淡到 0 → 会咔哒)");
+    }
 
     std::cout << "校验: " << doc.notes.size() << " 个事件, "
               << std::fixed << std::setprecision(2) << st.duration_sec << " s, "
@@ -257,6 +314,10 @@ int main(int argc, char* argv[])
     bool quiet = false;
     bool metrics = false;
     int  note_detail = 0;
+    int  wav_bits = 16;
+    bool wav_dither = true;
+    std::string cli_temperament;
+    double cli_stretch = -1.0;
 
     RenderOptions opt;
     opt.stereo = true;
@@ -283,7 +344,35 @@ int main(int argc, char* argv[])
         else if (arg == "--stereo") { opt.stereo = true; }
         else if (arg == "--no-reverb") { opt.reverb_wet = 0.0; }
         else if (arg == "--reverb") { opt.reverb_wet = std::stod(need("--reverb")); }
+        else if (arg == "--reverb-rt60") { opt.reverb_rt60 = std::stod(need("--reverb-rt60")); }
+        else if (arg == "--reverb-pre") { opt.reverb_predelay_ms = std::stod(need("--reverb-pre")); }
+        else if (arg == "--reverb-width") { opt.reverb_width = std::stod(need("--reverb-width")); }
+        else if (arg == "--reverb-damp") { opt.reverb_damp_hz = std::stod(need("--reverb-damp")); }
         else if (arg == "--duration-comp") { opt.dur_compensate = true; }
+        else if (arg == "--no-hold") { opt.hold_last_note = false; }
+        else if (arg == "--no-limit") { opt.limit = false; }
+        else if (arg == "--bits") {
+            wav_bits = std::stoi(need("--bits"));
+            if (wav_bits != 16 && wav_bits != 24) {
+                std::cerr << "--bits 只支持 16 / 24\n"; return 1;
+            }
+        }
+        else if (arg == "--no-dither") { wav_dither = false; }
+        else if (arg == "--normalize") {
+            const std::string m = need("--normalize");
+            if (m == "peak") opt.normalize = NormMode::Peak;
+            else if (m == "lufs") opt.normalize = NormMode::Lufs;
+            else if (m == "none") opt.normalize = NormMode::None;
+            else { std::cerr << "--normalize 只支持 peak / lufs / none\n"; return 1; }
+        }
+        else if (arg == "--target" || arg == "--headroom") {
+            opt.normalize_target = std::stod(need("--target"));
+        }
+        else if (arg == "--lufs") { opt.lufs_target = std::stod(need("--lufs")); }
+        else if (arg == "--temperament") {
+            cli_temperament = need("--temperament");
+        }
+        else if (arg == "--stretch") { cli_stretch = std::stod(need("--stretch")); }
         else if (arg == "--list") { list = true; }
         else if (arg == "--help" || arg == "-h") {
             std::cout <<
@@ -293,8 +382,20 @@ int main(int argc, char* argv[])
                 "  -o, --output FILE    输出 WAV 路径\n"
                 "      --mono           单声道 (默认立体声+混响)\n"
                 "      --no-reverb      关闭混响\n"
+                "      --reverb-rt60 S  混响 RT60 (默认 1.2 s)\n"
+                "      --reverb-pre MS  混响预延迟 (默认 12 ms)\n"
+                "      --reverb-width W 混响立体声宽度 0~1\n"
+                "      --reverb-damp HZ 混响高频吸收转折 (默认 4000 Hz)\n"
                 "      --sample-rate N  采样率 (默认 44100)\n"
-                "      --duration-comp  短音能量补偿\n"
+                "      --bits 16|24     WAV 位深 (24-bit 无量化失真)\n"
+                "      --no-dither      关闭 16/24-bit 的 TPDF dither\n"
+                "      --normalize M    peak(默认)/lufs/none 归一化方式\n"
+                "      --target X       peak 模式目标峰值 (默认 0.92)\n"
+                "      --lufs X         lufs 模式目标响度 (默认 -14 LUFS)\n"
+                "      --duration-comp  短音能量补偿 (时域整合等响)\n"
+                "      --no-hold        关闭自然余音 (严格按记谱时值截断, 旧行为)\n"
+                "      --temperament T  12tet/just/pyth 律制\n"
+                "      --stretch X      伸展调音 0~1 (钢琴 Railsback 曲线)\n"
                 "      --analyze        乐理/声学体检报告\n"
                 "      --check          校验乐谱: 严格模式 + 小节对齐/削波/直流断言,\n"
                 "                       不写出 WAV, 有问题时以非 0 退出 (供 CI 使用)\n"
@@ -323,6 +424,18 @@ int main(int argc, char* argv[])
 
         // 音色优先级: 文件内 @timbre/@acoustic > 命令行 --timbre > 默认钢琴
         // (--force-timbre 强制覆盖文件内设定, 适合同谱 A/B 对比音色)
+        if (!cli_temperament.empty()) {
+            if (!doc.has_acoustic) { doc.acoustic = Instruments::piano(); doc.has_acoustic = true; }
+            if (cli_temperament == "12tet") doc.acoustic.temperament = Temperament::Equal12;
+            else if (cli_temperament == "just") doc.acoustic.temperament = Temperament::Just;
+            else if (cli_temperament == "pyth") doc.acoustic.temperament = Temperament::Pythagorean;
+            else { std::cerr << "--temperament 只支持 12tet / just / pyth\n"; return 1; }
+        }
+        if (cli_stretch >= 0.0) {
+            if (!doc.has_acoustic) { doc.acoustic = Instruments::piano(); doc.has_acoustic = true; }
+            doc.acoustic.stretch = std::clamp(cli_stretch, 0.0, 1.0);
+        }
+
         if (!force_timbre.empty()) {
             doc.has_acoustic = false;
             doc.has_harmonics = false;
@@ -357,7 +470,7 @@ int main(int argc, char* argv[])
         }
 
         const int channels = opt.stereo ? 2 : 1;
-        if (!write_wav(output_file, audio, opt.sample_rate, channels)) {
+        if (!write_wav(output_file, audio, opt.sample_rate, channels, wav_bits, wav_dither)) {
             std::cerr << "Failed to write WAV: " << output_file << "\n";
             return 1;
         }
@@ -368,7 +481,9 @@ int main(int argc, char* argv[])
                       << "  乐器: " << (doc.timbre_name.empty() ? timbre_name : doc.timbre_name)
                       << "   音符: " << doc.notes.size()
                       << "   时长: " << (frames / opt.sample_rate) << " 秒"
-                      << "   声道: " << channels << "\n";
+                      << "   声道: " << channels
+                      << "   " << wav_bits << "-bit"
+                      << (wav_dither ? " +dither" : "") << "\n";
         }
 
         if (metrics) print_metrics(input_file, st, static_cast<int>(doc.notes.size()));

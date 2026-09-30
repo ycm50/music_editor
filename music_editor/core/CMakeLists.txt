@@ -1,5 +1,6 @@
 add_library(music-core STATIC
     note_parser.cpp
+    note_builder.cpp
     tone_gen.cpp
     wav_writer.cpp
     ai_prompt.cpp

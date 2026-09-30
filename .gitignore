@@ -52,3 +52,15 @@ Thumbs.db
 *.iml
 *.user
 aqtinstall.log
+
+# ── 本地评审稿 / 自检产物 (不进仓库) ─────────────
+# docs/ 是物理声学评审草稿: 可量化的结论已经并入 music_editor/readme.md 的
+# 「本轮物理模型重写(对比上一版)」一节与 tools/test_physics 的断言, 故不入库。
+docs/
+# README 里手写的 g++ 命令会在仓库根留下这些单文件自检程序
+/check_prompt
+/test_syntax
+/test_physics
+# 任何本地可执行文件与提交信息草稿
+*.exe
+COMMIT_MSG.txt

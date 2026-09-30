@@ -1,6 +1,10 @@
 #include "mainwindow.h"
+#include "insertpage.h"
 #include "tone_gen.h"
 #include "ai_prompt.h"
+
+#include <QDockWidget>
+#include <QToolBar>
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -129,6 +133,13 @@ void MainWindow::setup_ui()
     play_btn_     = new QPushButton("▶ 播放", this);
     export_btn_   = new QPushButton("导出 WAV", this);
 
+    auto* insert_btn = new QPushButton("插入面板", this);
+    insert_btn->setToolTip("勾选 + 参数的方式插入音符与乐器预设 (33 种物理乐器)");
+    connect(insert_btn, &QPushButton::clicked, this, [this] {
+        if (!insert_dock_) return;
+        insert_dock_->setVisible(!insert_dock_->isVisible());
+    });
+
     connect(load_btn, &QPushButton::clicked, this, &MainWindow::on_load);
     connect(save_btn, &QPushButton::clicked, this, &MainWindow::on_save);
     connect(play_btn_, &QPushButton::clicked, this, &MainWindow::on_play);
@@ -139,11 +150,21 @@ void MainWindow::setup_ui()
 
     btn_layout->addWidget(load_btn);
     btn_layout->addWidget(save_btn);
+    btn_layout->addWidget(insert_btn);
     btn_layout->addStretch();
     btn_layout->addWidget(play_btn_);
     btn_layout->addWidget(export_btn_);
 
     main_layout->addLayout(btn_layout);
+
+    // ── 插入面板 (右侧可停靠, 可隐藏) ───────────────────────────
+    insert_page_ = new InsertPage(note_editor_, this);
+    insert_dock_ = new QDockWidget("插入面板", this);
+    insert_dock_->setObjectName("insert_dock");
+    insert_dock_->setWidget(insert_page_);
+    insert_dock_->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    insert_dock_->setMinimumWidth(430);
+    addDockWidget(Qt::RightDockWidgetArea, insert_dock_);
 
     statusBar()->showMessage("就绪");
 }
@@ -732,8 +753,10 @@ QString MainWindow::validate_rcp(const QString& content)
 
         if (st.dc_offset > 1e-4)
             issues << QString("检测到直流偏置 %1 (异常)").arg(st.dc_offset);
-        if (st.discarded_total > 0)
-            issues << QString("%1 个分音越过 Nyquist 被丢弃 (可降低八度)")
+        if (st.boundary_glitches > 0)
+            issues << QString("%1 个音块存在硬切 (会咔哒)").arg(st.boundary_glitches);
+        if (st.discarded_total > 800)
+            issues << QString("低音区有 %1 个分音被上限裁剪 (可加大 @acoustic maxp=)")
                           .arg(st.discarded_total);
         if (st.bar_sec > 0.0 && std::abs(st.bar_fit_error) > 0.02)
             issues << QString("音符总长与小节不对齐, 偏差 %1 s").arg(st.bar_fit_error, 0, 'f', 3);

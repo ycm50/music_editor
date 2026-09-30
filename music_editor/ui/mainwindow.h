@@ -13,6 +13,8 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QDockWidget;
+class InsertPage;
 
 /**
  * RCP 乐谱编辑器主窗口 (与手机端一致)
@@ -82,6 +84,10 @@ private:
     QPushButton*  gen_btn_       = nullptr;
     QPushButton*  play_btn_      = nullptr;
     QPushButton*  export_btn_    = nullptr;
+
+    // 插入面板 (勾选 + 参数的方式插入音符 / 乐器)
+    InsertPage*   insert_page_   = nullptr;
+    QDockWidget*  insert_dock_   = nullptr;
 
     // 进程
     QProcess*     player_proc_   = nullptr;

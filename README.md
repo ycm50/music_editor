@@ -4,11 +4,13 @@
 
 ## 核心特点
 
-- **物理乐器模型**：分音频率含劲度非谐性 `f_n = n·f₁·√(1+B·n²)`，分音包络按**绝对时间**指数衰减 `A_n(t)=A_n(0)·(sus+(1-sus)·e^{-t/τ_n})`，与音符长短解耦——弹 1 拍与弹 4 拍音色一致
-- **8 种内置乐器**：piano / violin / flute / guitar / harp / bells / music_box / organ，也可用 `@acoustic` 自定义物理参数
+- **物理乐器模型**：分音频率含劲度非谐性 `f_n = n·f₁·√(1+B(f₁)·n²)`（**B 随音高上升**）；分音包络按**绝对时间**衰减，并区分「按键时值」与「制音器/自然余音」——钟写 1 拍也余音 12 秒，钢琴松键后按齿毡阻尼（0.09 s）收住
+- **33 种乐器预设**（键盘/拨弦/弓弦/管乐/打击/电声，含古筝/琵琶/扬琴/二胡/笛子）：每件都有激励点、共鸣体共振峰、同音弦组、力度-音色耦合、非谐分音表
+- **插入面板**：勾选框 + 参数的方式生成音符（含和弦/逐音物理覆盖），并按分类浏览乐器预设、微调全部物理参数后写入 `@timbre` / `@acoustic`（安卓端有对等对话框，两端共用同一个构造器）
 - **多声部与和弦**：`@voice` 独立时间轴纵向叠加，`[1.04+3.04+5.04]` 纵向和弦，`_` 真正连音（时值相加、只起音一次）
 - **乐理完整度**：升降号 `#4`/`b7`、附点 `2.`、三连音 `4t`、力度 `!pp..!ff`、拍号 `@meter` 校验
-- **可验证**：`--analyze` 输出音域、频谱重心、衰减时间常数、直流、混叠、小节对齐等客观指标
+- **可验证**：`--analyze` 除音域/直流/混叠/小节对齐外，还实测**发声长度、T30 衰减、分音数范围、重心/基频（是否随音区变化）、硬切音块（咔哒）、LUFS 响度、真峰值**；`tools/test_physics` 把这些物理行为做成断言
+- **分音不再是固定 12 个**：低音区分音多（C2 约 96 个）、高音区少（C6 约 16 个），按 f0 与可听带宽伸缩
 
 ## 功能
 
@@ -16,7 +18,7 @@
 - **导出 WAV**：立体声（Schroeder 混响）/ 单声道，16-bit PCM
 - **实时播放**：桌面端 Qt Multimedia（自动选择设备支持的音频格式），安卓端 AudioTrack
 - **AI 生成**（桌面端 + 安卓端）：OpenAI 兼容接口，一键生成乐谱、乐器与力度，流式输出；系统提示词与可自检示例的唯一来源在 `music_editor/core/ai_prompt.cpp`，两端共用同一份文本
-- **自检工具**：`tools/check_prompt`（断言提示词示例合法）+ `tools/test_syntax`（记法单元测试）
+- **自检工具**：`tools/test_syntax`（记法单元测试）+ `tools/test_physics`（物理行为断言：分音数/重心/力度音色/制音器/硬切/构造器往返）+ `tools/check_prompt`（断言提示词示例合法）
 - **一键构建**：GitHub Actions 手动触发（或打 tag），一次产出 Windows (x64/arm64) zip、Linux (x64/arm64) tar.gz 与安卓 APK
 
 ## 项目结构
@@ -26,13 +28,16 @@
 ├── music_editor/                   桌面端 (C++20 + CMake + Qt6)
 │   ├── core/                       纯 C++ 共享库 (无 Qt 依赖, 桌面/安卓复用)
 │   │   ├── note_parser             RCP 解析 (音符/元数据/物理参数/乐理校验)
-│   │   ├── tone_gen                物理合成 + 乐器库 + 混响 + 体检指标
+│   │   ├── tone_gen                物理合成 + 33 种乐器预设 + 混响 + 体检指标
+│   │   ├── note_builder            插入面板的 token/@acoustic 构造器 (两端共用)
 │   │   ├── ai_prompt               AI 系统提示词 + 可自检示例 (两端唯一来源)
-│   │   └── wav_writer              16-bit PCM WAV 编码/写入 (含立体声)
+│   │   └── wav_writer              16/24-bit PCM WAV 编码/写入 (含立体声 + dither)
 │   ├── player/                     命令行播放器 (Qt6::Multimedia)
 │   ├── save/                       RCP→WAV 转换 + --analyze 体检 (纯 C++, 无 Qt)
 │   └── ui/                         GUI 编辑器 (Qt6::Widgets, GUI 子系统无终端窗口)
-├── tools/                          自检工具 (check_prompt / test_syntax)
+│       ├── mainwindow              编辑 / 播放 / 导出 / AI 生成
+│       └── insertpage              插入面板 (勾选+参数插入音符 / 33 种乐器预设)
+├── tools/                          自检工具 (check_prompt / test_syntax / test_physics)
 ├── demos/                          示例曲目 (.rcp 源码 + out/*.wav 试听)
 ├── android/                        安卓端 (Kotlin + NDK/JNI)
 │   └── app/src/main/cpp/           JNI 桥接, 直接引用 music_editor/core 源码
@@ -77,8 +82,12 @@ build/player/player.exe demos/01_piano_nocturne.rcp --instrument piano
 build/save/save.exe demos/01_piano_nocturne.rcp --analyze -o out.wav
 # 同谱 A/B 对比音色 (强制覆盖文件内 @timbre)
 build/save/save.exe demos/02_timbre_compare.rcp -T violin -o cmp_violin.wav
-# 查看可用乐器及其物理参数
+# 查看 33 种乐器及其物理参数 (按分类)
 build/save/save.exe --list
+# 响度归一 + 24-bit 导出
+build/save/save.exe demos/02_timbre_compare.rcp --normalize lufs --lufs -16 --bits 24 -o out24.wav
+# 物理自检 (分音数/重心/力度音色/制音器/硬切/构造器往返)
+build/tools/test_physics.exe
 # 图形界面 (无终端窗口; 自动查找同目录或 ../ 下的 player/save)
 build/ui/ui.exe
 ```
@@ -92,7 +101,7 @@ build/ui/ui.exe
 > 脚本会打印 `[run_ui] Qt6 found at: ...`，据此可确认探测结果。纯命令行方式也可手动设置：`set PATH=A:\msys64\ucrt64\bin;%CD%\build\ui;%PATH%`。
 
 
-> `ui` 与手机端一致：单个编辑框直接编辑完整 RCP 内容（头部/`@` 元数据/音符），参数从编辑框内容解析；内置 AI 生成谱（OpenAI 兼容接口，流式输出）、复制提示词按钮，在"设置 (AI)"中配置 Base URL / API Key / 模型。编辑内容与 AI 设置持久化到 `ui.exe` 同目录的 `config.json`，下次启动自动恢复。生成后会跑一遍 `--analyze` 体检，把乐理/格式问题显示在状态栏。
+> `ui` 与手机端一致：单个编辑框直接编辑完整 RCP 内容（头部/`@` 元数据/音符），参数从编辑框内容解析；右侧『插入面板』可用勾选框+参数插入音符与乐器预设（含逐音物理覆盖与全部物理参数微调）；内置 AI 生成谱（OpenAI 兼容接口，流式输出）、复制提示词按钮，在"设置 (AI)"中配置 Base URL / API Key / 模型。编辑内容与 AI 设置持久化到 `ui.exe` 同目录的 `config.json`，下次启动自动恢复。生成后会跑一遍 `--analyze` 体检，把乐理/格式问题显示在状态栏。
 
 ## 示例曲目（demos/）
 
@@ -152,25 +161,26 @@ cd android
 > 在 x64 runner 上无法执行，因此该 job 不跑 `ctest`，改为校验产物 PE 头（`e_machine == 0xAA64`），
 > 且 zip 里不含 Qt 运行库（`windeployqt` 不支持交叉部署）。`build.yml` 末尾附了备选方案说明。
 
-### 构建矩阵里跑什么（三道闸门）
+### 构建矩阵里跑什么（四道闸门）
 
-`build.yml` 的 Linux 两个 job 会依次跑完这三道闸门（Windows / 安卓 job 只负责出产物）：
+`build.yml` 的 Linux 两个 job 会依次跑完这四道闸门（Windows / 安卓 job 只负责出产物）：
 
 1. **记法/解析器** — `tools/test_syntax`：每种写法一条用例，含旧格式兼容、容错/严格两档
-2. **提示词与仓库内乐谱** — `tools/check_prompt` + `save --check`：严格解析、小节对齐、无削波/直流
-3. **合成确定性** — `ci/check_metrics.sh` 与 `ci/metrics_golden.txt` 逐字段比对（跨平台/跨编译器一致性）
+2. **物理模型** — `tools/test_physics`：分音数随音高伸缩、重心随音区变化、力度改音色、制音器/自然余音、33 种乐器无硬切、声像展开、面板构造器与 `@acoustic` 往返一致
+3. **提示词与仓库内乐谱** — `tools/check_prompt` + `save --check`：严格解析、小节对齐、无削波/直流/硬切
+4. **合成确定性** — `ci/check_metrics.sh` 与 `ci/metrics_golden.txt` 逐字段比对（跨平台/跨编译器一致性）
 
 本地复刻：
 
 ```bash
 cmake -S music_editor -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
-ctest --test-dir build --output-on-failure          # 10 个用例, 约 6 秒
+ctest --test-dir build --output-on-failure          # 11 个用例, 约 30 秒 (物理模型分音数变多, 渲染变慢)
 bash ci/check_metrics.sh build/save/save ci/metrics_golden.txt
 python ci/validate_workflows.py                     # 校验 workflow 的 YAML 与本地引用
 ```
 
-> 改了合成算法或乐器参数后，第 3 道闸门会失败，这是**预期行为**。确认改动无误后同步基准：
+> 改了合成算法或乐器参数后，最后一道闸门会失败，这是**预期行为**。确认改动无误后同步基准：
 > ```bash
 > for d in demos/*.rcp; do ./build/save/save "$d" --metrics | sed 's|^METRICS ||; s|\\|/|g; s|[^ ]*/||'; done > ci/metrics_golden.txt
 > ```

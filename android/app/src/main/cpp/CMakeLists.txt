@@ -4,8 +4,13 @@ project(music-editor-android VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 与桌面端一致: 关掉 FMA 收缩, 让 arm64 与 x86_64 的合成结果在容差内一致
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(-ffp-contract=off)
+endif()
+
 # ── 纯 C++ 核心库 (与桌面版 music_editor/core 同源, 复用同一份源码) ──
-# note_parser / tone_gen / wav_writer / ai_prompt 不依赖任何 Android/Qt 特性
+# note_parser / note_builder / tone_gen / wav_writer / ai_prompt 不依赖任何 Android/Qt 特性
 # monorepo 内直接引用桌面端源码目录, 避免两份拷贝漂移
 # 从 android/app/src/main/cpp 上溯 5 层到仓库根: ../../../../../music_editor/core
 set(MUSIC_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../../../music_editor/core")
@@ -14,6 +19,7 @@ if(NOT EXISTS "${MUSIC_CORE_DIR}/note_parser.cpp")
 endif()
 add_library(music-core STATIC
     ${MUSIC_CORE_DIR}/note_parser.cpp
+    ${MUSIC_CORE_DIR}/note_builder.cpp      # 插入对话框用的 token/@acoustic 构造器
     ${MUSIC_CORE_DIR}/tone_gen.cpp
     ${MUSIC_CORE_DIR}/wav_writer.cpp
     ${MUSIC_CORE_DIR}/ai_prompt.cpp

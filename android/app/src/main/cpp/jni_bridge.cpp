@@ -26,22 +26,12 @@
 #include <vector>
 
 #include "ai_prompt.h"
+#include "note_builder.h"
 #include "note_parser.h"
 #include "tone_gen.h"
 #include "wav_writer.h"
 
-// ── float32 [-1,1] → int16 PCM ────────────────────────────────────
-static std::vector<int16_t> to_pcm16(const std::vector<float>& samples)
-{
-    std::vector<int16_t> pcm(samples.size());
-    for (size_t i = 0; i < samples.size(); ++i) {
-        float s = samples[i];
-        if (s > 1.0f) s = 1.0f;
-        else if (s < -1.0f) s = -1.0f;
-        pcm[i] = static_cast<int16_t>(s * 32767.0f);
-    }
-    return pcm;
-}
+// float32 → int16 统一走 wav_writer 的实现 (四舍五入 + TPDF dither), 与桌面端一致。
 
 // ── JNI 异常辅助 ──────────────────────────────────────────────────
 static void throw_runtime(JNIEnv* env, const std::string& msg)
@@ -280,9 +270,14 @@ Java_com_music_editor_MusicNative_analyze(JNIEnv* env, jclass /*clazz*/,
         os << "音符/休止: " << st.note_count << " / " << st.rest_count
            << "  和弦块 " << st.chords << "  最大同时发声 " << st.max_polyphony << "\n";
         os << "峰值/RMS: " << st.peak << " / " << st.rms
-           << "  峰均比 " << st.crest_db << " dB\n";
+           << "  峰均比 " << st.crest_db << " dB  真峰值 " << st.true_peak << "\n";
+        os << "响度: " << st.lufs << " LUFS\n";
         os << "直流: " << std::scientific << st.dc_offset << std::fixed
-           << "  混叠丢弃分音: " << st.discarded_total << "\n";
+           << "  硬切音块: " << st.boundary_glitches
+           << "  分音上限裁剪: " << st.discarded_total << "\n";
+        os << "分音数: " << st.partials_min << " ~ " << st.partials_max
+           << "  发声长度: " << st.ring_min_sec << " ~ " << st.ring_max_sec << " s"
+           << "  被截断事件: " << st.truncated_notes << "\n";
         if (st.bar_sec > 0.0)
             os << "拍号 " << doc.meter_num << "/" << doc.meter_den
                << "  小节数 " << st.bars << "  对齐偏差 " << st.bar_fit_error << " s\n";
@@ -290,6 +285,128 @@ Java_com_music_editor_MusicNative_analyze(JNIEnv* env, jclass /*clazz*/,
         if (audio.empty()) os << "! 未生成音频\n";
 
         return env->NewStringUTF(os.str().c_str());
+    } catch (const std::exception& e) {
+        throw_runtime(env, e.what());
+        return nullptr;
+    }
+}
+// ─────────────────────────────────────────────────────────────────
+//  插入面板 (与桌面端共用 core/note_builder, 保证两端 token 一致)
+// ─────────────────────────────────────────────────────────────────
+namespace {
+
+std::string jtrim(std::string s)
+{
+    const auto b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return {};
+    const auto e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
+}
+
+double jnum(const std::string& s, double def)
+{
+    try { return std::stod(s); } catch (...) { return def; }
+}
+
+/// 把 Kotlin 侧传来的 "键=值;键=值" 解析成 NoteSpec
+NoteSpec spec_from_string(const std::string& text)
+{
+    NoteSpec spec;
+    std::stringstream ss(text);
+    std::string item;
+    while (std::getline(ss, item, ';')) {
+        const auto eq = item.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string k = jtrim(item.substr(0, eq));
+        const std::string v = jtrim(item.substr(eq + 1));
+        if (v.empty() && k != "chord") continue;
+
+        if      (k == "degree") spec.degree = static_cast<int>(jnum(v, 1));
+        else if (k == "acc")    spec.accidental = static_cast<int>(jnum(v, 0));
+        else if (k == "oct")    spec.octave = static_cast<int>(jnum(v, 0));
+        else if (k == "den")    spec.denominator = static_cast<int>(jnum(v, 4));
+        else if (k == "dot")    spec.dotted = jnum(v, 0) != 0.0;
+        else if (k == "tup")    spec.tuplet = static_cast<int>(jnum(v, 0));
+        else if (k == "tie")    spec.tie = jnum(v, 0) != 0.0;
+        else if (k == "art")    spec.articulation = static_cast<int>(jnum(v, 0));
+        else if (k == "rep")    spec.repeat = static_cast<int>(jnum(v, 1));
+        else if (k == "voice")  spec.voice = static_cast<int>(jnum(v, 0));
+        else if (k == "vel") {
+            const auto& names = dynamic_names();
+            int idx = -1;
+            for (size_t i = 0; i < names.size(); ++i) if (names[i] == v) { idx = static_cast<int>(i); break; }
+            if (idx >= 0) { spec.use_velocity = true; spec.velocity_id = idx; }
+            else          { spec.use_velocity = true; spec.velocity_id = -1; spec.velocity = jnum(v, 1.0); }
+        }
+        else if (k == "chord") {
+            std::stringstream cs(v);
+            std::string tok;
+            while (std::getline(cs, tok, ',')) {
+                const std::string t = jtrim(tok);
+                if (!t.empty()) spec.chord_tokens.push_back(t);
+            }
+        }
+        else if (k == "atk")    { spec.ov_atk = true; spec.atk = jnum(v, 0.01); }
+        else if (k == "dec")    { spec.ov_dec = true; spec.dec = jnum(v, 1.0); }
+        else if (k == "sus")    { spec.ov_sus = true; spec.sus = jnum(v, 0.5); }
+        else if (k == "br")     { spec.ov_br = true; spec.br = jnum(v, 0.7); }
+        else if (k == "b")      { spec.ov_B = true; spec.B = jnum(v, 1e-4); }
+        else if (k == "pos")    { spec.ov_pos = true; spec.pos = jnum(v, 0.125); }
+        else if (k == "damper") { spec.ov_damper = true; spec.damper = jnum(v, 0.08); }
+    }
+    return spec;
+}
+
+} // namespace
+
+// ── 9. buildNoteToken(spec): String ──────────────────────────────
+// spec 形如 "degree=1;acc=0;oct=0;den=4;dot=0;tup=0;vel=mf;art=0;chord=3.04,5.04;pos=0.125"
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_music_editor_MusicNative_buildNoteToken(JNIEnv* env, jclass /*clazz*/, jstring spec)
+{
+    try {
+        const NoteSpec s = spec_from_string(jstring_to_std(env, spec));
+        return env->NewStringUTF(render_note_token(s).c_str());
+    } catch (const std::exception& e) {
+        throw_runtime(env, e.what());
+        return nullptr;
+    }
+}
+
+// ── 10. getPresetCatalog(): String[] (名称|分类|说明) ────────────
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_music_editor_MusicNative_getPresetCatalog(JNIEnv* env, jclass /*clazz*/)
+{
+    const auto list = instrument_catalog();
+    jclass string_cls = env->FindClass("java/lang/String");
+    if (!string_cls) return nullptr;
+    jobjectArray arr = env->NewObjectArray(static_cast<jsize>(list.size()), string_cls, nullptr);
+    if (!arr) return nullptr;
+    for (size_t i = 0; i < list.size(); ++i) {
+        const std::string s = list[i].name + "|" + list[i].category + "|" + list[i].desc;
+        jstring js = env->NewStringUTF(s.c_str());
+        env->SetObjectArrayElement(arr, static_cast<jsize>(i), js);
+        env->DeleteLocalRef(js);
+    }
+    return arr;
+}
+
+// ── 11. buildTimbreLine(name): String  → "@timbre piano" ─────────
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_music_editor_MusicNative_buildTimbreLine(JNIEnv* env, jclass /*clazz*/, jstring name)
+{
+    return env->NewStringUTF(render_timbre_directive(jstring_to_std(env, name)).c_str());
+}
+
+// ── 12. buildAcousticLine(name): String → "@acoustic ..." ────────
+// 把预设的全部物理参数展开成一行, 便于用户在手机上直接看到/微调
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_music_editor_MusicNative_buildAcousticLine(JNIEnv* env, jclass /*clazz*/, jstring name)
+{
+    try {
+        const AcousticParams* p = Instruments::find_by_name(jstring_to_std(env, name));
+        if (!p) return env->NewStringUTF("");
+        return env->NewStringUTF(render_acoustic_directive(*p).c_str());
     } catch (const std::exception& e) {
         throw_runtime(env, e.what());
         return nullptr;

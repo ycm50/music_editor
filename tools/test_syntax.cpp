@@ -111,6 +111,24 @@ int main()
         }
     }
 
+    // 音值时值精确断言 (三连音/五连音/附点): 曾经把三连音实现成 ×3/2 (等于附点),
+    // 这里钉死语义, 防止再次回归。
+    {
+        std::printf("[音值时值: 4=1拍, 4.=1.5拍, 4t=2/3拍, 4q=4/5拍, 三个4t=2拍] ");
+        NoteParser p(261.63, 0.5);
+        const double d4   = p.parse("1.04").duration_sec / 0.5;    // 拍
+        const double ddot = p.parse("1.04.").duration_sec / 0.5;
+        const double dt   = p.parse("3.04t").duration_sec / 0.5;
+        const double dq   = p.parse("3.04q").duration_sec / 0.5;
+        const double d3t  = p.parse("3.04t").duration_sec * 3 / 0.5;
+        const bool ok = std::abs(d4 - 1.0) < 1e-9 && std::abs(ddot - 1.5) < 1e-9
+                        && std::abs(dt - 2.0 / 3.0) < 1e-9 && std::abs(dq - 0.8) < 1e-9
+                        && std::abs(d3t - 2.0) < 1e-9;
+        std::printf("%s (%.4f / %.4f / %.4f / %.4f / %.4f 拍)\n",
+                    ok ? "OK" : "**FAIL**", d4, ddot, dt, dq, d3t);
+        if (!ok) ++g_fail;
+    }
+
     std::printf("\n%s (失败 %d 项)\n", g_fail ? "**有用例失败**" : "全部用例通过 ✅", g_fail);
     return g_fail ? 1 : 0;
 }
