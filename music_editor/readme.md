@@ -85,6 +85,12 @@ build\player\player.exe 1.rcp
 | `ui` | 图形界面编辑器 |
 | `test_syntax` / `test_physics` / `check_prompt` | 自检工具（`-DMUSIC_BUILD_TOOLS=ON` 时构建） |
 
+> 📖 **`save` 的完整命令行参考见 [`save/readme.md`](save/readme.md)** ——
+> 涵盖全部选项（混响/归一化/律制/位深）、`--check` 的校验范围、
+> `--analyze` 体检报告的读法、**`@acoustic` 音色定制的完整参数表**
+> （含 `table=` 任意分音表），以及逐音 `$` 参数必须写成音内后缀等易踩的坑。
+> 上表只列最常用的一行式用法。
+
 ### 测试与自检
 
 ```bash
